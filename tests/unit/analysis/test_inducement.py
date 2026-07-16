@@ -1,0 +1,61 @@
+from src.analysis.ict.inducement import InducementAnalyzer
+from src.domain.candle import Candle
+from src.domain.candle_series import CandleSeries
+
+
+def bullish():
+
+    candles = [
+
+        Candle(1,100,103,99,102,100),
+        Candle(2,102,104,101,103,100),
+        Candle(3,103,105,102,104,100),
+        Candle(4,104,106,103,105,100),
+        Candle(5,105,107,104,106,100),
+        Candle(6,104,108,103,107,100),
+
+    ]
+
+    return CandleSeries(
+        symbol="BTCUSDT",
+        timeframe="1m",
+        candles=candles,
+    )
+
+
+def bearish():
+
+    candles = [
+
+        Candle(1,110,112,109,111,100),
+        Candle(2,111,113,110,112,100),
+        Candle(3,112,114,111,113,100),
+        Candle(4,113,115,112,114,100),
+        Candle(5,114,116,113,115,100),
+        Candle(6,116,117,112,113,100),
+
+    ]
+
+    return CandleSeries(
+        symbol="BTCUSDT",
+        timeframe="1m",
+        candles=candles,
+    )
+
+
+def test_buy():
+
+    signal = InducementAnalyzer().analyze(
+        bullish()
+    )
+
+    assert signal.direction == "BUY"
+
+
+def test_sell():
+
+    signal = InducementAnalyzer().analyze(
+        bearish()
+    )
+
+    assert signal.direction == "SELL"
