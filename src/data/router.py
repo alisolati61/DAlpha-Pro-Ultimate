@@ -3,36 +3,75 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Callable
 
-from src.domain.market_data import MarketData
 
-
-class MarketDataRouter:
+class DataRouter:
     """
-    Routes market data to subscribed handlers.
+    Event Router for Data Engine.
+
+    Responsible for dispatching market events
+    to subscribed modules.
+
+    Future
+    -------
+    - Async dispatch
+    - Priority routing
+    - Event filtering
     """
 
     def __init__(self) -> None:
-        self._subscribers: dict[str, list[Callable[[MarketData], None]]] = defaultdict(list)
+
+        self._handlers: dict[
+            str,
+            list[Callable],
+        ] = defaultdict(list)
+
+    # ---------------------------------------------
 
     def subscribe(
         self,
-        symbol: str,
-        callback: Callable[[MarketData], None],
+        event: str,
+        callback: Callable,
     ) -> None:
 
-        self._subscribers[symbol].append(callback)
+        if callback not in self._handlers[event]:
+
+            self._handlers[event].append(callback)
+
+    # ---------------------------------------------
+
+    def unsubscribe(
+        self,
+        event: str,
+        callback: Callable,
+    ) -> None:
+
+        if callback in self._handlers[event]:
+
+            self._handlers[event].remove(callback)
+
+    # ---------------------------------------------
 
     def publish(
         self,
-        data: MarketData,
+        event: str,
+        payload,
     ) -> None:
 
-        for callback in self._subscribers.get(data.symbol, []):
-            callback(data)
+        for callback in self._handlers[event]:
 
-    def subscriber_count(
+            callback(payload)
+
+    # ---------------------------------------------
+
+    def subscribers(
         self,
-        symbol: str,
+        event: str,
     ) -> int:
 
-        return len(self._subscribers.get(symbol, []))
+        return len(self._handlers[event])
+
+    # ---------------------------------------------
+
+    def clear(self) -> None:
+
+        self._handlers.clear()

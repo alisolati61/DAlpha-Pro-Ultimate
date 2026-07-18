@@ -1,10 +1,23 @@
+from __future__ import annotations
+
 from src.domain.candle import Candle
 from src.domain.candle_series import CandleSeries
 
 
 class CandleMapper:
     """
-    Converts CCXT OHLCV data into CandleSeries.
+    Converts OHLCV rows into a CandleSeries.
+
+    Expected row format:
+
+    [
+        timestamp,
+        open,
+        high,
+        low,
+        close,
+        volume,
+    ]
     """
 
     @staticmethod
@@ -30,6 +43,8 @@ class CandleMapper:
                 volume=row[5],
             )
 
-            series.add(candle)
+            series.add(
+                candle
+            )
 
         return series

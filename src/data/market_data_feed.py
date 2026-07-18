@@ -1,51 +1,54 @@
-"""
-Market Data Feed
+from __future__ import annotations
 
-دریافت داده از صرافی
-فعلاً نسخه Mock
-بعداً Binance و Bybit به آن متصل می‌شوند.
-"""
+from abc import ABC, abstractmethod
 
-import asyncio
-import random
-from datetime import datetime
-
-from .market_data import MarketData
+from src.data.market_data import MarketData
 
 
-class MarketDataFeed:
+class MarketDataFeed(ABC):
+    """
+    Base interface for every market data provider.
 
-    def __init__(self):
-        self.running = False
+    Future implementations:
+    - BinanceFeed
+    - BybitFeed
+    - OKXFeed
+    - KuCoinFeed
+    - PaperFeed
+    """
 
-    async def start(self):
+    @abstractmethod
+    def connect(self) -> None:
+        raise NotImplementedError
 
-        self.running = True
+    @abstractmethod
+    def disconnect(self) -> None:
+        raise NotImplementedError
 
-        while self.running:
+    @abstractmethod
+    def is_connected(self) -> bool:
+        raise NotImplementedError
 
-            price = random.uniform(65000, 66000)
+    @abstractmethod
+    def subscribe(
+        self,
+        symbol: str,
+        timeframe: str,
+    ) -> None:
+        raise NotImplementedError
 
-            data = MarketData(
-                symbol="BTCUSDT",
-                price=price,
-                bid=price - 2,
-                ask=price + 2,
-                volume=random.uniform(1, 50),
-                timestamp=datetime.utcnow()
-            )
+    @abstractmethod
+    def unsubscribe(
+        self,
+        symbol: str,
+        timeframe: str,
+    ) -> None:
+        raise NotImplementedError
 
-            await self.on_tick(data)
-
-            await asyncio.sleep(1)
-
-    async def on_tick(self, market_data: MarketData):
-
-        print(
-            f"{market_data.symbol} | "
-            f"{market_data.price:.2f} | "
-            f"Vol={market_data.volume:.2f}"
-        )
-
-    def stop(self):
-        self.running = False
+    @abstractmethod
+    def latest(
+        self,
+        symbol: str,
+        timeframe: str,
+    ) -> MarketData:
+        raise NotImplementedError

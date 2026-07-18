@@ -1,35 +1,74 @@
+from __future__ import annotations
+
 from typing import Dict
 
-from .base import BaseExchange
-from .ccxt_exchange import CCXTExchange
+from src.exchange.ccxt_exchange import CCXTExchange
 
 
 class ExchangeManager:
+    """
+    Central manager for exchange instances.
 
-    def __init__(self):
-        self._connectors: Dict[str, BaseExchange] = {}
+    Features
+    --------
+    - Singleton exchange objects
+    - Lazy initialization
+    - Connection lifecycle
+    """
 
-    def register(self, name: str):
+    def __init__(self) -> None:
 
-        if name not in self._connectors:
-            self._connectors[name] = CCXTExchange(name)
+        self._instances: Dict[str, CCXTExchange] = {}
 
-    def get(self, name: str) -> BaseExchange | None:
-        return self._connectors.get(name)
+    # ------------------------------------------------
 
-    def remove(self, name: str):
+    def register(
+        self,
+        name: str,
+        exchange: CCXTExchange,
+    ) -> None:
 
-        if name in self._connectors:
-            del self._connectors[name]
+        self._instances[name] = exchange
 
-    def exists(self, name: str) -> bool:
-        return name in self._connectors
+    # ------------------------------------------------
 
-    def list(self):
-        return list(self._connectors.keys())
+    def get(
+        self,
+        name: str,
+    ) -> CCXTExchange:
 
-    def count(self):
-        return len(self._connectors)
+        return self._instances[name]
 
-    def clear(self):
-        self._connectors.clear()
+    # ------------------------------------------------
+
+    def exists(
+        self,
+        name: str,
+    ) -> bool:
+
+        return name in self._instances
+
+    # ------------------------------------------------
+
+    def remove(
+        self,
+        name: str,
+    ) -> None:
+
+        self._instances.pop(name, None)
+
+    # ------------------------------------------------
+
+    def names(self) -> list[str]:
+
+        return list(self._instances.keys())
+
+    # ------------------------------------------------
+
+    async def shutdown(self) -> None:
+
+        for exchange in self._instances.values():
+
+            await exchange.disconnect()
+
+        self._instances.clear()

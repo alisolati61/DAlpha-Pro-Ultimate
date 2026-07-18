@@ -1,92 +1,78 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(slots=True)
 class OrderBook:
-
     symbol: str
-
-    bids: list[tuple[float, float]] = field(default_factory=list)
-
-    asks: list[tuple[float, float]] = field(default_factory=list)
+    bids: list[tuple[float, float]]
+    asks: list[tuple[float, float]]
 
 
 class OrderBookManager:
+    """
+    Stores the latest order book snapshot for each symbol.
+    """
 
-    def __init__(self):
+    def __init__(self) -> None:
 
         self._books: dict[str, OrderBook] = {}
 
+    # ------------------------------------------------
+
     def update(
-
         self,
-
         symbol: str,
-
         bids: list[tuple[float, float]],
-
         asks: list[tuple[float, float]],
-
     ) -> None:
 
         self._books[symbol] = OrderBook(
-
             symbol=symbol,
-
-            bids=bids,
-
-            asks=asks,
-
+            bids=[(float(p), float(q)) for p, q in bids],
+            asks=[(float(p), float(q)) for p, q in asks],
         )
 
+    # ------------------------------------------------
+
     def get(
-
         self,
-
         symbol: str,
-
     ) -> OrderBook | None:
 
         return self._books.get(symbol)
 
-    def exists(
-
-        self,
-
-        symbol: str,
-
-    ) -> bool:
-
-        return symbol in self._books
+    # ------------------------------------------------
 
     def best_bid(
-
         self,
-
         symbol: str,
-
-    ) -> float | None:
+    ) -> tuple[float, float] | None:
 
         book = self.get(symbol)
 
         if not book or not book.bids:
             return None
 
-        return book.bids[0][0]
+        return max(book.bids, key=lambda x: x[0])
+
+    # ------------------------------------------------
 
     def best_ask(
-
         self,
-
         symbol: str,
-
-    ) -> float | None:
+    ) -> tuple[float, float] | None:
 
         book = self.get(symbol)
 
         if not book or not book.asks:
             return None
 
-        return book.asks[0][0]
+        return min(book.asks, key=lambda x: x[0])
+
+    # ------------------------------------------------
+
+    def clear(self) -> None:
+
+        self._books.clear()

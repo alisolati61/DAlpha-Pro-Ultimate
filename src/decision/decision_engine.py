@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+from src.ai.feedback_loop import FeedbackLoop
+from src.ai.performance_tracker import PerformanceTracker
+from src.ai.weight_optimizer import WeightOptimizer
+
 from src.decision.models import (
     DecisionInput,
     DecisionResult,
@@ -12,61 +18,67 @@ class DecisionEngine:
     """
     Central Decision Engine.
 
-    Responsibilities
+    Responsibilities:
 
-    - Fuse all analysis scores
-    - Produce weighted score
-    - Calculate confidence
+    - Collect analysis scores
+    - Fuse signals
+    - Calculate final score
+    - Calculate adaptive confidence
     - Validate trade
-    - Produce BUY / SELL / HOLD
+    - Produce final trading decision
 
-    Future:
+    Future versions:
 
     - AI Decision Layer
-    - Dynamic Market Regime
-    - Adaptive Thresholds
+    - Probability Engine
+    - Market Regime Filter
+    - Multi-Timeframe Confirmation
     - Strategy Profiles
     """
 
-    BUY_THRESHOLD = 70.0
-    SELL_THRESHOLD = 30.0
-    MIN_CONFIDENCE = 0.70
-
     def __init__(
         self,
-        minimum_score: float = BUY_THRESHOLD,
-    ):
+        minimum_score: float = 70.0,
+    ) -> None:
+
         self.minimum_score = minimum_score
+
+        self.performance_tracker = PerformanceTracker()
+
+        self.feedback_loop = FeedbackLoop()
+
+        self.weight_optimizer = WeightOptimizer()
+
+        self.confidence_engine = ConfidenceEngine(
+            tracker=self.performance_tracker,
+            feedback=self.feedback_loop,
+            optimizer=self.weight_optimizer,
+        )
+
+    # --------------------------------------------------
 
     def evaluate(
         self,
         decision: DecisionInput,
     ) -> DecisionResult:
 
-        # ---------------------------------
+        # -----------------------------
         # Signal Fusion
-        # ---------------------------------
+        # -----------------------------
+        scores = SignalFusion.fuse(decision)
 
-        scores = SignalFusion.fuse(
-            decision
-        )
+        final_score = SignalFusion.average(scores)
 
-        final_score = SignalFusion.average(
-            scores
-        )
-
-        # ---------------------------------
-        # Confidence
-        # ---------------------------------
-
-        confidence = ConfidenceEngine.calculate(
+        # -----------------------------
+        # Adaptive Confidence
+        # -----------------------------
+        confidence = self.confidence_engine.calculate(
             final_score
         )
 
-        # ---------------------------------
+        # -----------------------------
         # Trade Validation
-        # ---------------------------------
-
+        # -----------------------------
         approved, reason = TradeValidator.validate(
             decision
         )
@@ -81,38 +93,19 @@ class DecisionEngine:
                 reason=reason,
             )
 
-        # ---------------------------------
+        # -----------------------------
         # Final Decision
-        # ---------------------------------
-
-        if (
-            final_score >= self.BUY_THRESHOLD
-            and confidence >= self.MIN_CONFIDENCE
-        ):
-
-            action = "BUY"
-
-            reason = "BUY threshold satisfied"
-
-        elif (
-            final_score <= self.SELL_THRESHOLD
-            and confidence >= self.MIN_CONFIDENCE
-        ):
-
-            action = "SELL"
-
-            reason = "SELL threshold satisfied"
-
-        else:
-
-            action = "HOLD"
-
-            reason = "Conditions not satisfied"
+        # -----------------------------
+        action = (
+            "BUY"
+            if final_score >= self.minimum_score
+            else "HOLD"
+        )
 
         return DecisionResult(
             action=action,
             confidence=confidence,
             final_score=round(final_score, 2),
             scores=scores,
-            reason=reason,
+            reason="Decision Engine evaluation",
         )

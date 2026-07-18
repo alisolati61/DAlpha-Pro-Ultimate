@@ -1,56 +1,58 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class WebSocketState:
+    connected: bool = False
+    endpoint: str = ""
 
 
 class WebSocketManager:
     """
-    Base websocket manager.
+    Generic WebSocket manager.
 
-    Exchange adapters (Binance, Bybit, OKX...)
-    will use this class.
+    Future
+    -------
+    - Binance WebSocket
+    - Bybit WebSocket
+    - OKX WebSocket
+    - Auto Reconnect
+    - Heartbeat
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
 
-        self._running = False
+        self._state = WebSocketState()
 
-        self._callbacks: list[
-            Callable[[dict], Awaitable[None]]
-        ] = []
+    # -------------------------------------
 
-    def subscribe(
-
+    def connect(
         self,
-
-        callback: Callable[[dict], Awaitable[None]],
-
+        endpoint: str,
     ) -> None:
 
-        self._callbacks.append(callback)
+        self._state.endpoint = endpoint
 
-    async def publish(
+        self._state.connected = True
 
-        self,
+    # -------------------------------------
 
-        message: dict,
+    def disconnect(self) -> None:
 
-    ) -> None:
+        self._state.connected = False
 
-        for callback in self._callbacks:
-
-            await callback(message)
-
-    async def start(self):
-
-        self._running = True
-
-    async def stop(self):
-
-        self._running = False
+    # -------------------------------------
 
     @property
-    def running(self):
+    def connected(self) -> bool:
 
-        return self._running
+        return self._state.connected
+
+    # -------------------------------------
+
+    @property
+    def endpoint(self) -> str:
+
+        return self._state.endpoint

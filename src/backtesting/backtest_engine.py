@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Iterable
 
 
 @dataclass
@@ -10,20 +13,46 @@ class BacktestResult:
 
 
 class BacktestEngine:
+    """
+    Basic backtesting result evaluator.
 
-    def evaluate(self, trades):
+    Receives a sequence of trade PnL values and returns
+    aggregate performance statistics.
+    """
+
+    def evaluate(
+        self,
+        trades: Iterable[float],
+    ) -> BacktestResult:
+
+        trades = list(trades)
 
         total = len(trades)
 
-        wins = len([t for t in trades if t > 0])
+        wins = sum(
+            1
+            for trade in trades
+            if trade > 0
+        )
 
-        losses = total - wins
+        losses = sum(
+            1
+            for trade in trades
+            if trade <= 0
+        )
 
-        win_rate = (wins / total * 100) if total else 0
+        win_rate = (
+            wins / total * 100
+            if total
+            else 0.0
+        )
 
         return BacktestResult(
             total_trades=total,
             wins=wins,
             losses=losses,
-            win_rate=round(win_rate, 2),
+            win_rate=round(
+                win_rate,
+                2,
+            ),
         )

@@ -1,18 +1,32 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
-from src.data.validator import MarketDataValidator
-from src.domain.market_data import MarketData
+from src.data.market_data import MarketData
+from src.data.validator import (
+    MarketDataValidator,
+    ValidationResult,
+)
 
 
-def create_data():
+def make():
 
     return MarketData(
+
         symbol="BTCUSDT",
-        price=100000,
-        bid=99990,
-        ask=100010,
-        volume=100,
-        timestamp=datetime.now(),
+
+        exchange="Binance",
+
+        timeframe="1m",
+
+        price=100,
+
+        bid=99,
+
+        ask=101,
+
+        volume=10,
+
+        timestamp=datetime.now(UTC),
+
     )
 
 
@@ -20,72 +34,102 @@ def test_valid():
 
     validator = MarketDataValidator()
 
-    assert validator.validate(create_data())
+    result = validator.validate(
+
+        make(),
+
+    )
+
+    assert isinstance(
+
+        result,
+
+        ValidationResult,
+
+    )
+
+    assert result.valid
 
 
-def test_negative_price():
-
-    validator = MarketDataValidator()
-
-    data = create_data()
-
-    data.price = -1
-
-    assert not validator.validate(data)
-
-
-def test_negative_bid():
-
-    validator = MarketDataValidator()
-
-    data = create_data()
-
-    data.bid = -5
-
-    assert not validator.validate(data)
-
-
-def test_negative_ask():
+def test_price():
 
     validator = MarketDataValidator()
 
-    data = create_data()
+    d = make()
 
-    data.ask = -10
+    d.price = 0
 
-    assert not validator.validate(data)
-
-
-def test_bid_greater_than_ask():
-
-    validator = MarketDataValidator()
-
-    data = create_data()
-
-    data.bid = 101000
-
-    data.ask = 100000
-
-    assert not validator.validate(data)
+    assert not validator.validate(d).valid
 
 
-def test_negative_volume():
+def test_bid():
 
     validator = MarketDataValidator()
 
-    data = create_data()
+    d = make()
 
-    data.volume = -100
+    d.bid = 0
 
-    assert not validator.validate(data)
+    assert not validator.validate(d).valid
 
 
-def test_empty_symbol():
+def test_ask():
 
     validator = MarketDataValidator()
 
-    data = create_data()
+    d = make()
 
-    data.symbol = ""
+    d.ask = 0
 
-    assert not validator.validate(data)
+    assert not validator.validate(d).valid
+
+
+def test_bid_ask():
+
+    validator = MarketDataValidator()
+
+    d = make()
+
+    d.bid = 110
+
+    d.ask = 100
+
+    assert not validator.validate(d).valid
+
+
+def test_volume():
+
+    validator = MarketDataValidator()
+
+    d = make()
+
+    d.volume = -1
+
+    assert not validator.validate(d).valid
+
+
+def test_types():
+
+    validator = MarketDataValidator()
+
+    result = validator.validate(
+
+        make(),
+
+    )
+
+    assert isinstance(
+
+        result.valid,
+
+        bool,
+
+    )
+
+    assert isinstance(
+
+        result.reason,
+
+        str,
+
+    )

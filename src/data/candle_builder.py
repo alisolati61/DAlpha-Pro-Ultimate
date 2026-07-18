@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 @dataclass(slots=True)
@@ -21,58 +21,128 @@ class Candle:
 
     volume: float
 
-    timestamp: datetime
+    start_time: datetime
 
 
 class CandleBuilder:
 
-    def __init__(self):
+    """
+    Builds OHLCV candles from incoming ticks.
 
-        self._current: Candle | None = None
+    Future
+    -------
+    - Multi-timeframe aggregation
+    - Volume Profile
+    - VWAP
+    """
 
-    def start(
-        self,
-        symbol: str,
-        timeframe: str,
-        price: float,
-        volume: float,
-        timestamp: datetime,
-    ) -> Candle:
+    def __init__(self) -> None:
 
-        self._current = Candle(
-            symbol=symbol,
-            timeframe=timeframe,
-            open=price,
-            high=price,
-            low=price,
-            close=price,
-            volume=volume,
-            timestamp=timestamp,
-        )
+        self._current: dict[
+            tuple[str, str],
+            Candle,
+        ] = {}
 
-        return self._current
+    # ------------------------------------------------
 
     def update(
+
         self,
+
+        symbol: str,
+
+        timeframe: str,
+
         price: float,
+
         volume: float,
+
+        timestamp: datetime | None = None,
+
     ) -> Candle:
 
-        candle = self._current
+        if timestamp is None:
 
-        if candle is None:
-            raise RuntimeError("No active candle.")
+            timestamp = datetime.now(UTC)
 
-        candle.high = max(candle.high, price)
-        candle.low = min(candle.low, price)
+        key = (
 
-        candle.close = price
+            symbol,
 
-        candle.volume += volume
+            timeframe,
+
+        )
+
+        if key not in self._current:
+
+            candle = Candle(
+
+                symbol=symbol,
+
+                timeframe=timeframe,
+
+                open=float(price),
+
+                high=float(price),
+
+                low=float(price),
+
+                close=float(price),
+
+                volume=float(volume),
+
+                start_time=timestamp,
+
+            )
+
+            self._current[key] = candle
+
+            return candle
+
+        candle = self._current[key]
+
+        candle.high = max(
+            candle.high,
+            float(price),
+        )
+
+        candle.low = min(
+            candle.low,
+            float(price),
+        )
+
+        candle.close = float(price)
+
+        candle.volume += float(volume)
 
         return candle
 
-    @property
-    def current(self):
+    # ------------------------------------------------
 
-        return self._current
+    def latest(
+
+        self,
+
+        symbol: str,
+
+        timeframe: str,
+
+    ) -> Candle | None:
+
+        return self._current.get(
+
+            (
+
+                symbol,
+
+                timeframe,
+
+            )
+
+        )
+
+    # ------------------------------------------------
+
+    def clear(self) -> None:
+
+        self._current.clear()

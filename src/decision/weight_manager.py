@@ -1,29 +1,32 @@
+from __future__ import annotations
+
 from typing import Dict
+
+from src.ai.weight_optimizer import WeightOptimizer
 
 
 class WeightManager:
     """
-    Provides weights for every analysis module.
+    Dynamic Weight Manager.
 
-    Future versions may load weights from:
+    Retrieves weights from the AI optimizer.
 
-    - AI optimizer
-    - Configuration
-    - Strategy profile
-    - Market regime
+    Future versions:
+    ----------------
+    - Market Regime Profiles
+    - Strategy Profiles
+    - Session Profiles
     """
 
-    DEFAULT_WEIGHTS = {
-        "technical": 0.25,
-        "smart_money": 0.30,
-        "orderflow": 0.20,
-        "sentiment": 0.10,
-        "onchain": 0.15,
-    }
+    _optimizer = WeightOptimizer()
+
+    @classmethod
+    def optimizer(cls) -> WeightOptimizer:
+        return cls._optimizer
 
     @classmethod
     def weights(cls) -> Dict[str, float]:
-        return cls.DEFAULT_WEIGHTS.copy()
+        return cls._optimizer.weights()
 
     @classmethod
     def weighted_average(
@@ -41,10 +44,23 @@ class WeightManager:
             weight = weights.get(key, 0.0)
 
             total += score * weight
-
             total_weight += weight
 
         if total_weight == 0:
             return 0.0
 
-        return total / total_weight
+        return round(total / total_weight, 2)
+
+    @classmethod
+    def update_module_performance(
+        cls,
+        module: str,
+        performance: float,
+    ) -> None:
+
+        cls._optimizer.update_performance(
+            module,
+            performance,
+        )
+
+        cls._optimizer.optimize()

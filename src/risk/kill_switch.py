@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Optional
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class KillSwitchState:
     active: bool = False
     reason: str = ""
-    activated_at: Optional[datetime] = None
+    activated_at: datetime | None = None
 
 
 class KillSwitch:
@@ -17,37 +16,93 @@ class KillSwitch:
     Emergency trading stop.
 
     When activated:
+
     - No new positions are allowed.
-    - Existing positions should be closed by the execution engine.
+    - Existing positions should be handled by the
+      execution/position management layer.
+
+    The kill switch is intentionally explicit and
+    does not automatically deactivate.
     """
 
+    DEFAULT_REASON = "Manual activation"
+
     def __init__(self) -> None:
+
         self._state = KillSwitchState()
 
-    def activate(self, reason: str = "Manual activation") -> None:
-        """
-        Activate the kill switch.
-        """
-        self._state.active = True
-        self._state.reason = reason
-        self._state.activated_at = datetime.now(UTC)
+    # --------------------------------------------------
+
+    def activate(
+        self,
+        reason: str = DEFAULT_REASON,
+    ) -> None:
+
+        if not isinstance(
+            reason,
+            str,
+        ):
+
+            raise TypeError(
+                "Reason must be a string."
+            )
+
+        normalized_reason = reason.strip()
+
+        if not normalized_reason:
+
+            raise ValueError(
+                "Reason cannot be empty."
+            )
+
+        self._state = KillSwitchState(
+
+            active=True,
+
+            reason=normalized_reason,
+
+            activated_at=datetime.now(UTC),
+
+        )
+
+    # --------------------------------------------------
 
     def deactivate(self) -> None:
-        """
-        Deactivate the kill switch.
-        """
-        self._state.active = False
-        self._state.reason = ""
-        self._state.activated_at = None
+
+        self._state = KillSwitchState()
+
+    # --------------------------------------------------
 
     @property
-    def active(self) -> bool:
+    def state(
+        self,
+    ) -> KillSwitchState:
+
+        return self._state
+
+    # --------------------------------------------------
+
+    @property
+    def active(
+        self,
+    ) -> bool:
+
         return self._state.active
 
-    @property
-    def reason(self) -> str:
-        return self._state.reason
+    # --------------------------------------------------
 
     @property
-    def activated_at(self) -> Optional[datetime]:
+    def reason(
+        self,
+    ) -> str:
+
+        return self._state.reason
+
+    # --------------------------------------------------
+
+    @property
+    def activated_at(
+        self,
+    ) -> datetime | None:
+
         return self._state.activated_at

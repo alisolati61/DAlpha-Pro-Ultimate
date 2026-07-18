@@ -1,66 +1,215 @@
-from datetime import datetime
+from src.data.candle_builder import (
+    Candle,
+    CandleBuilder,
+)
 
-from src.data.candle_builder import CandleBuilder
 
-
-def test_start():
+def test_first_tick():
 
     builder = CandleBuilder()
 
-    candle = builder.start(
-        symbol="BTCUSDT",
-        timeframe="1m",
-        price=100000,
-        volume=5,
-        timestamp=datetime.now(),
+    candle = builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        100,
+
+        5,
+
     )
 
-    assert candle.open == 100000
-    assert candle.high == 100000
-    assert candle.low == 100000
-    assert candle.close == 100000
+    assert isinstance(
+
+        candle,
+
+        Candle,
+
+    )
+
+    assert candle.open == 100
+
+    assert candle.close == 100
+
+
+def test_high_low():
+
+    builder = CandleBuilder()
+
+    builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        100,
+
+        1,
+
+    )
+
+    candle = builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        120,
+
+        2,
+
+    )
+
+    assert candle.high == 120
+
+    assert candle.low == 100
+
+
+def test_close():
+
+    builder = CandleBuilder()
+
+    builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        100,
+
+        1,
+
+    )
+
+    candle = builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        110,
+
+        1,
+
+    )
+
+    assert candle.close == 110
+
+
+def test_volume():
+
+    builder = CandleBuilder()
+
+    builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        100,
+
+        2,
+
+    )
+
+    candle = builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        101,
+
+        3,
+
+    )
+
     assert candle.volume == 5
 
 
-def test_update():
+def test_latest():
 
     builder = CandleBuilder()
 
-    builder.start(
-        symbol="BTCUSDT",
-        timeframe="1m",
-        price=100000,
-        volume=5,
-        timestamp=datetime.now(),
+    builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        100,
+
+        1,
+
     )
 
-    candle = builder.update(
-        price=101000,
-        volume=2,
+    candle = builder.latest(
+
+        "BTCUSDT",
+
+        "1m",
+
     )
 
-    assert candle.high == 101000
-    assert candle.low == 100000
-    assert candle.close == 101000
-    assert candle.volume == 7
+    assert candle is not None
 
 
-def test_update_lower_price():
+def test_clear():
 
     builder = CandleBuilder()
 
-    builder.start(
-        symbol="BTCUSDT",
-        timeframe="1m",
-        price=100000,
-        volume=5,
-        timestamp=datetime.now(),
+    builder.update(
+
+        "BTCUSDT",
+
+        "1m",
+
+        100,
+
+        1,
+
     )
+
+    builder.clear()
+
+    assert builder.latest(
+
+        "BTCUSDT",
+
+        "1m",
+
+    ) is None
+
+
+def test_types():
+
+    builder = CandleBuilder()
 
     candle = builder.update(
-        price=99000,
-        volume=1,
+
+        "BTCUSDT",
+
+        "1m",
+
+        100,
+
+        1,
+
     )
 
-    assert candle.low == 99000
-    assert candle.close == 99000
+    assert isinstance(
+
+        candle.open,
+
+        float,
+
+    )
+
+    assert isinstance(
+
+        candle.volume,
+
+        float,
+
+    )

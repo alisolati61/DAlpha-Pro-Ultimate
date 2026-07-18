@@ -1,75 +1,122 @@
-from src.data.orderbook_manager import OrderBookManager
+from src.data.orderbook_manager import (
+    OrderBook,
+    OrderBookManager,
+)
+
+
+def sample():
+
+    bids = [
+
+        (100, 2),
+
+        (99, 5),
+
+        (98, 8),
+
+    ]
+
+    asks = [
+
+        (101, 3),
+
+        (102, 4),
+
+        (103, 6),
+
+    ]
+
+    return bids, asks
 
 
 def test_update():
 
     manager = OrderBookManager()
 
+    bids, asks = sample()
+
     manager.update(
-
         "BTCUSDT",
-
-        bids=[(100000, 2), (99990, 1)],
-
-        asks=[(100010, 3), (100020, 1)],
-
+        bids,
+        asks,
     )
 
-    assert manager.exists("BTCUSDT")
+    assert isinstance(
+        manager.get("BTCUSDT"),
+        OrderBook,
+    )
 
 
 def test_best_bid():
 
     manager = OrderBookManager()
 
+    bids, asks = sample()
+
     manager.update(
-
         "BTCUSDT",
-
-        bids=[(100000, 2), (99990, 1)],
-
-        asks=[(100010, 3)],
-
+        bids,
+        asks,
     )
 
-    assert manager.best_bid("BTCUSDT") == 100000
+    assert manager.best_bid("BTCUSDT") == (100.0, 2.0)
 
 
 def test_best_ask():
 
     manager = OrderBookManager()
 
+    bids, asks = sample()
+
     manager.update(
-
         "BTCUSDT",
-
-        bids=[(100000, 2)],
-
-        asks=[(100010, 3), (100020, 1)],
-
+        bids,
+        asks,
     )
 
-    assert manager.best_ask("BTCUSDT") == 100010
+    assert manager.best_ask("BTCUSDT") == (101.0, 3.0)
 
 
-def test_get():
+def test_clear():
 
     manager = OrderBookManager()
 
+    bids, asks = sample()
+
     manager.update(
-
         "BTCUSDT",
+        bids,
+        asks,
+    )
 
-        bids=[(100000, 1)],
+    manager.clear()
 
-        asks=[(100010, 1)],
+    assert manager.get("BTCUSDT") is None
 
+
+def test_empty():
+
+    manager = OrderBookManager()
+
+    assert manager.best_bid("BTCUSDT") is None
+
+    assert manager.best_ask("BTCUSDT") is None
+
+
+def test_types():
+
+    manager = OrderBookManager()
+
+    bids, asks = sample()
+
+    manager.update(
+        "BTCUSDT",
+        bids,
+        asks,
     )
 
     book = manager.get("BTCUSDT")
 
-    assert book is not None
+    assert isinstance(book.bids, list)
 
-    assert len(book.bids) == 1
-
-    assert len(book.asks) == 1
+    assert isinstance(book.asks, list)

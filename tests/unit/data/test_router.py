@@ -1,42 +1,115 @@
-from datetime import datetime
+from src.data.router import DataRouter
 
-from src.data.router import MarketDataRouter
-from src.domain.market_data import MarketData
+
+def test_subscribe():
+
+    router = DataRouter()
+
+    def handler(data):
+        pass
+
+    router.subscribe(
+        "tick",
+        handler,
+    )
+
+    assert router.subscribers("tick") == 1
 
 
 def test_publish():
 
-    router = MarketDataRouter()
+    router = DataRouter()
 
     received = []
 
-    def handler(data: MarketData):
+    def handler(data):
+
         received.append(data)
 
     router.subscribe(
-        "BTCUSDT",
+        "tick",
         handler,
     )
 
     router.publish(
-        MarketData(
-            symbol="BTCUSDT",
-            price=100000,
-            bid=99999,
-            ask=100001,
-            volume=100,
-            timestamp=datetime.now(),
-        )
+        "tick",
+        123,
     )
 
-    assert len(received) == 1
+    assert received == [123]
 
 
-def test_subscriber_count():
+def test_unsubscribe():
 
-    router = MarketDataRouter()
+    router = DataRouter()
 
-    router.subscribe("BTCUSDT", lambda x: None)
-    router.subscribe("BTCUSDT", lambda x: None)
+    def handler(data):
+        pass
 
-    assert router.subscriber_count("BTCUSDT") == 2
+    router.subscribe(
+        "tick",
+        handler,
+    )
+
+    router.unsubscribe(
+        "tick",
+        handler,
+    )
+
+    assert router.subscribers("tick") == 0
+
+
+def test_duplicate():
+
+    router = DataRouter()
+
+    def handler(data):
+        pass
+
+    router.subscribe(
+        "tick",
+        handler,
+    )
+
+    router.subscribe(
+        "tick",
+        handler,
+    )
+
+    assert router.subscribers("tick") == 1
+
+
+def test_clear():
+
+    router = DataRouter()
+
+    def handler(data):
+        pass
+
+    router.subscribe(
+        "tick",
+        handler,
+    )
+
+    router.clear()
+
+    assert router.subscribers("tick") == 0
+
+
+def test_multiple_events():
+
+    router = DataRouter()
+
+    def a(data):
+        pass
+
+    def b(data):
+        pass
+
+    router.subscribe("tick", a)
+
+    router.subscribe("orderbook", b)
+
+    assert router.subscribers("tick") == 1
+
+    assert router.subscribers("orderbook") == 1
