@@ -1,0 +1,727 @@
+=== GIT STATUS ===
+?? project_audit_snapshot.txt
+
+=== GIT LOG ===
+39261de Stabilize project: all tests passing
+c5e6783 fix(domain): freeze Symbol and Price value objects
+cd1e3b8 chore: register all project files
+90527c8 Initial commit - DAlpha Pro Ultimate
+
+=== PYTHON FILES ===
+src\__init__.py	0
+src\adapters\base_adapter.py	320
+src\ai\ai_engine.py	3029
+src\ai\decision_engine_old.py	970
+src\ai\feedback_loop.py	2637
+src\ai\market_regime.py	3635
+src\ai\market_regime_old.py	1069
+src\ai\performance_tracker.py	4272
+src\ai\probability_engine.py	2676
+src\ai\scoring_engine_old.py	694
+src\ai\signal_validation.py	3044
+src\ai\strategy_selector_old.py	835
+src\ai\weight_optimizer.py	2616
+src\analysis\confluence_engine.py	1491
+src\analysis\decision_engine.py	609
+src\analysis\market_regime.py	946
+src\analysis\signal_engine.py	880
+src\analysis\derivatives\funding_rate.py	704
+src\analysis\derivatives\heatmap.py	822
+src\analysis\derivatives\liquidation.py	892
+src\analysis\derivatives\long_short_ratio.py	815
+src\analysis\derivatives\open_interest.py	881
+src\analysis\derivatives\__init__.py	0
+src\analysis\ict\breaker_block.py	1356
+src\analysis\ict\break_of_structure.py	1336
+src\analysis\ict\change_of_character.py	1283
+src\analysis\ict\equal_levels.py	1323
+src\analysis\ict\fair_value_gap.py	1375
+src\analysis\ict\ict_engine.py	850
+src\analysis\ict\inducement.py	1405
+src\analysis\ict\liquidity_sweep.py	1442
+src\analysis\ict\mitigation_block.py	1376
+src\analysis\ict\optimal_trade_entry.py	1888
+src\analysis\ict\order_block.py	1353
+src\analysis\ict\premium_discount.py	1303
+src\analysis\indicators\macd.py	0
+src\analysis\intermarket\intermarket_engine.py	1185
+src\analysis\intermarket\__init__.py	0
+src\analysis\onchain\exchange_flow.py	669
+src\analysis\onchain\holder_profit.py	739
+src\analysis\onchain\stablecoins.py	692
+src\analysis\onchain\whales.py	0
+src\analysis\onchain\whale_tracker.py	535
+src\analysis\onchain\__init__.py	0
+src\analysis\orderflow\absorption.py	914
+src\analysis\orderflow\cvd.py	638
+src\analysis\orderflow\delta_volume.py	698
+src\analysis\orderflow\footprint.py	539
+src\analysis\orderflow\imbalance.py	601
+src\analysis\orderflow\__init__.py	0
+src\analysis\sentiment\economic_calendar.py	926
+src\analysis\sentiment\market_sentiment.py	972
+src\analysis\sentiment\news_intelligence.py	951
+src\analysis\sentiment\__init__.py	0
+src\analysis\smart_money\bos.py	736
+src\analysis\smart_money\choch.py	924
+src\analysis\smart_money\equal_highs_lows.py	0
+src\analysis\smart_money\fair_value_gap.py	1215
+src\analysis\smart_money\liquidity.py	945
+src\analysis\smart_money\market_structure.py	1245
+src\analysis\smart_money\order_block.py	637
+src\analysis\smart_money\__init__.py	0
+src\analysis\technical\anchored_vwap.py	0
+src\analysis\technical\atr.py	1406
+src\analysis\technical\channel.py	0
+src\analysis\technical\ema.py	858
+src\analysis\technical\fibonacci.py	0
+src\analysis\technical\macd.py	2956
+src\analysis\technical\market_profile.py	570
+src\analysis\technical\pivot.py	0
+src\analysis\technical\rsi.py	1598
+src\analysis\technical\support_resistance.py	1270
+src\analysis\technical\swing.py	2675
+src\analysis\technical\trendline.py	0
+src\analysis\technical\volume_profile.py	911
+src\analysis\technical\__init__.py	0
+src\backtesting\backtest_engine.py	1111
+src\backtesting\monte_carlo.py	1417
+src\backtesting\parameter_optimizer.py	1589
+src\backtesting\report_generator.py	952
+src\backtesting\statistics_engine.py	3545
+src\backtesting\strategy_runner.py	2106
+src\backtesting\trade_simulator.py	2145
+src\backtesting\walk_forward.py	1449
+src\config\constants.py	0
+src\config\settings.py	332
+src\config\__init__.py	0
+src\core\asset_scorer.py	1854
+src\core\decision_engine.py	741
+src\core\market_regime.py	567
+src\core\scoring_engine.py	485
+src\core\strategy_selector.py	647
+src\core\__init__.py	0
+src\core\context\app_context.py	335
+src\core\context\context_builder.py	428
+src\core\context\exceptions.py	65
+src\core\context\__init__.py	148
+src\core\contracts\configuration.py	252
+src\core\contracts\event_bus.py	384
+src\core\contracts\interfaces.py	0
+src\core\contracts\logger.py	464
+src\core\contracts\registry.py	368
+src\core\contracts\service.py	301
+src\core\contracts\__init__.py	278
+src\core\dependency_injection\container.py	1297
+src\core\dependency_injection\exceptions.py	158
+src\core\dependency_injection\lifetime.py	113
+src\core\dependency_injection\provider.py	286
+src\core\dependency_injection\__init__.py	139
+src\core\event_bus\event.py	696
+src\core\event_bus\event_bus.py	1663
+src\core\event_bus\exceptions.py	649
+src\core\event_bus\handler.py	358
+src\core\event_bus\subscription.py	1696
+src\core\event_bus\types.py	435
+src\core\event_bus\__init__.py	0
+src\core\exceptions\base.py	109
+src\core\exceptions\configuration.py	122
+src\core\exceptions\core.py	116
+src\core\exceptions\validation.py	117
+src\core\exceptions\__init__.py	251
+src\core\kernel\bootstrap.py	371
+src\core\kernel\kernel.py	1076
+src\core\kernel\state.py	186
+src\core\kernel\__init__.py	111
+src\core\lifecycle\lifecycle.py	676
+src\core\lifecycle\service.py	370
+src\core\lifecycle\state.py	162
+src\core\lifecycle\__init__.py	186
+src\core\registry\exceptions.py	249
+src\core\registry\registry.py	1140
+src\core\registry\types.py	46
+src\core\registry\__init__.py	65
+src\core\types\common.py	138
+src\core\types\identifiers.py	229
+src\core\types\json_types.py	47
+src\core\types\timestamps.py	53
+src\core\types\__init__.py	523
+src\data\candle_builder.py	2296
+src\data\data_cache.py	1661
+src\data\data_manager.py	1502
+src\data\data_validator.py	1525
+src\data\main.py	200
+src\data\market_data.py	819
+src\data\market_data_feed.py	1090
+src\data\normalizer.py	960
+src\data\orderbook_manager.py	1733
+src\data\router.py	1549
+src\data\tick_processor.py	1712
+src\data\validator.py	1382
+src\data\websocket_manager.py	1069
+src\decision\confidence_aggregator.py	832
+src\decision\confidence_engine.py	2235
+src\decision\decision_engine.py	2898
+src\decision\models.py	650
+src\decision\signal_fusion.py	733
+src\decision\signal_weight_engine.py	1457
+src\decision\trade_validator.py	714
+src\decision\weight_manager.py	1348
+src\decision\__init__.py	467
+src\domain\base.py	283
+src\domain\candle.py	232
+src\domain\candle_series.py	507
+src\domain\exceptions.py	1135
+src\domain\market_data.py	605
+src\domain\order.py	360
+src\domain\scored_asset.py	343
+src\domain\entities\aggregate_root.py	625
+src\domain\entities\base_entity.py	509
+src\domain\entities\exceptions.py	76
+src\domain\entities\__init__.py	137
+src\domain\events\domain_event.py	350
+src\domain\events\__init__.py	75
+src\domain\value_objects\entity_id.py	385
+src\domain\value_objects\exceptions.py	379
+src\domain\value_objects\market.py	1450
+src\domain\value_objects\money.py	1653
+src\domain\value_objects\order_status.py	784
+src\domain\value_objects\order_type.py	595
+src\domain\value_objects\price.py	1470
+src\domain\value_objects\quantity.py	1476
+src\domain\value_objects\side.py	332
+src\domain\value_objects\symbol.py	1378
+src\domain\value_objects\time_in_force.py	551
+src\domain\value_objects\__init__.py	575
+src\drivers\base_driver.py	510
+src\drivers\ccxt_driver.py	742
+src\drivers\paper_driver.py	1204
+src\exchange\base.py	1855
+src\exchange\bingx_adapter.py	11848
+src\exchange\bingx_client.py	23449
+src\exchange\bingx_websocket.py	15027
+src\exchange\ccxt_exchange.py	2873
+src\exchange\exceptions.py	1718
+src\exchange\exchange_factory.py	3828
+src\exchange\manager.py	1726
+src\exchange\models.py	4415
+src\exchange\ratelimiter.py	2724
+src\exchange\reconnect.py	1292
+src\exchange\websocket.py	1475
+src\exchange\__init__.py	69
+src\exchange\connectors\crypto_connector.py	2926
+src\exchange\connectors\init.py	0
+src\execution\balance_tracker.py	3757
+src\execution\execution_engine.py	4271
+src\execution\execution_history.py	1932
+src\execution\execution_manager.py	1575
+src\execution\execution_report.py	3485
+src\execution\order_manager.py	3718
+src\execution\order_tracker.py	5870
+src\execution\paper_trading.py	3359
+src\execution\portfolio_manager.py	3835
+src\execution\portfolio_sync.py	3906
+src\execution\position_manager.py	7401
+src\execution\slippage.py	4378
+src\execution\smart_router.py	4494
+src\infrastructure\base_connector.py	0
+src\infrastructure\exchange_connector.py	0
+src\infrastructure\connectors\data_fusion.py	217
+src\infrastructure\connectors\failover.py	0
+src\infrastructure\connectors\news_connector.py	0
+src\infrastructure\connectors\onchain_connector.py	0
+src\infrastructure\connectors\sentiment_connector.py	0
+src\infrastructure\connectors\validator.py	629
+src\infrastructure\connectors\websocket_connector.py	0
+src\infrastructure\connectors\__init__.py	0
+src\intelligence\analyzers\market_analyzer.py	732
+src\intelligence\analyzers\rsi_analyzer.py	682
+src\intelligence\analyzers\technical_score_analyzer.py	1259
+src\intelligence\analyzers\trend_analyzer.py	549
+src\intelligence\analyzers\volume_analyzer.py	572
+src\intelligence\analyzers\__init__.py	0
+src\intelligence\trend_discovery\engine.py	739
+src\intelligence\trend_discovery\__init__.py	0
+src\intelligence\watchlist\engine.py	541
+src\intelligence\watchlist\__init__.py	0
+src\interfaces\exchange_interface.py	1985
+src\logger\logger.py	472
+src\logger\__init__.py	30
+src\market\candle_mapper.py	957
+src\market\market_data.py	285
+src\market\normalizer.py	710
+src\market\__init__.py	0
+src\risk\circuit_breaker.py	4078
+src\risk\drawdown_guard.py	4087
+src\risk\in_trade_monitor.py	3394
+src\risk\kill_switch.py	2503
+src\risk\portfolio_guard.py	6219
+src\risk\position_sizer.py	2399
+src\risk\pre_trade_validator.py	5121
+src\risk\risk_manager.py	6254
+src\risk\risk_orchestrator.py	5311
+src\shared\clock\clock.py	197
+src\shared\clock\frozen_clock.py	227
+src\shared\clock\system_clock.py	155
+src\shared\clock\__init__.py	186
+src\shared\ids\generator.py	222
+src\shared\ids\prefixes.py	175
+src\shared\ids\uuid_generator.py	233
+src\shared\ids\__init__.py	186
+src\shared\mapper\exceptions.py	75
+src\shared\mapper\mapper.py	259
+src\shared\mapper\registry.py	562
+src\shared\mapper\__init__.py	120
+src\shared\result\exceptions.py	114
+src\shared\result\failure.py	102
+src\shared\result\result.py	1015
+src\shared\result\success.py	149
+src\shared\result\__init__.py	151
+src\shared\serializer\exceptions.py	99
+src\shared\serializer\json_serializer.py	522
+src\shared\serializer\serializer.py	276
+src\shared\serializer\__init__.py	139
+src\shared\validators\errors.py	136
+src\shared\validators\exceptions.py	96
+src\shared\validators\result.py	492
+src\shared\validators\validator.py	300
+src\shared\validators\__init__.py	192
+src\shared\value_objects\money.py	171
+src\shared\value_objects\percentage.py	146
+src\shared\value_objects\price.py	344
+src\shared\value_objects\quantity.py	283
+src\shared\value_objects\symbol.py	107
+src\shared\value_objects\__init__.py	243
+src\strategy\strategy_engine.py	749
+
+=== TEST FILES ===
+tests\test_absorption.py
+tests\test_asset_scorer.py
+tests\test_atr.py
+tests\test_backtest_engine.py
+tests\test_bos.py
+tests\test_candle.py
+tests\test_candle_mapper.py
+tests\test_candle_series.py
+tests\test_choch.py
+tests\test_confidence_engine.py
+tests\test_config.py
+tests\test_crypto_connector.py
+tests\test_cvd.py
+tests\test_data_fusion.py
+tests\test_decision_models.py
+tests\test_delta_volume.py
+tests\test_drawdown_guard.py
+tests\test_economic_calendar.py
+tests\test_ema.py
+tests\test_event_bus.py
+tests\test_exchange_flow.py
+tests\test_exchange_manager.py
+tests\test_fair_value_gap.py
+tests\test_footprint.py
+tests\test_funding_rate.py
+tests\test_heatmap.py
+tests\test_holder_profit.py
+tests\test_imbalance.py
+tests\test_intermarket.py
+tests\test_kill_switch.py
+tests\test_liquidation.py
+tests\test_liquidity.py
+tests\test_long_short_ratio.py
+tests\test_macd.py
+tests\test_market_analyzer.py
+tests\test_market_profile.py
+tests\test_market_regime.py
+tests\test_market_sentiment.py
+tests\test_market_structure.py
+tests\test_news_intelligence.py
+tests\test_open_interest.py
+tests\test_order_block.py
+tests\test_order_manager.py
+tests\test_paper_trading.py
+tests\test_position_manager.py
+tests\test_position_sizer.py
+tests\test_rate_limiter.py
+tests\test_reconnect.py
+tests\test_risk_manager.py
+tests\test_rsi.py
+tests\test_rsi_analyzer.py
+tests\test_scoring_engine.py
+tests\test_signal_fusion.py
+tests\test_stablecoin_flow.py
+tests\test_strategy_selector.py
+tests\test_support_resistance.py
+tests\test_swing.py
+tests\test_technical_score_analyzer.py
+tests\test_trade_validator.py
+tests\test_trend_analyzer.py
+tests\test_trend_discovery.py
+tests\test_validator.py
+tests\test_volume_analyzer.py
+tests\test_volume_profile.py
+tests\test_websocket.py
+tests\test_weight_manager.py
+tests\test_whale_tracker.py
+tests\__init__.py
+tests\core\__init__.py
+tests\core\context\test_core_context.py
+tests\core\context\__init__.py
+tests\core\contracts\__init__.py
+tests\core\dependency_injection\test_container.py
+tests\core\dependency_injection\__init__.py
+tests\core\event_bus\test_event_bus.py
+tests\core\event_bus\test_event_bus_types.py
+tests\core\event_bus\test_handler.py
+tests\core\event_bus\__init__.py
+tests\core\exceptions\test_exceptions.py
+tests\core\exceptions\__init__.py
+tests\core\kernel\test_core_kernel.py
+tests\core\kernel\__init__.py
+tests\core\lifecycle\test_lifecycle.py
+tests\core\lifecycle\__init__.py
+tests\core\registry\test_core_registry.py
+tests\core\registry\__init__.py
+tests\core\types\test_core_types.py
+tests\core\types\__init__.py
+tests\domain\__init__.py
+tests\domain\entities\test_aggregate_root.py
+tests\domain\entities\test_base_entity.py
+tests\domain\entities\__init__.py
+tests\domain\events\test_domain_event.py
+tests\domain\events\__init__.py
+tests\domain\value_objects\test_domain_symbol.py
+tests\domain\value_objects\test_market.py
+tests\domain\value_objects\test_money.py
+tests\domain\value_objects\test_order_type.py
+tests\domain\value_objects\test_price.py
+tests\domain\value_objects\test_quantity.py
+tests\domain\value_objects\test_side.py
+tests\domain\value_objects\test_time_in_force.py
+tests\domain\value_objects\__init__.py
+tests\execution\__init__.py
+tests\manual\test_signal_validation_manual.py
+tests\manual\__init__.py
+tests\shared\__init__.py
+tests\shared\clock\test_clock.py
+tests\shared\clock\__init__.py
+tests\shared\ids\test_ids.py
+tests\shared\ids\__init__.py
+tests\shared\mapper\test_mapper.py
+tests\shared\mapper\__init__.py
+tests\shared\result\test_shared_result.py
+tests\shared\result\__init__.py
+tests\shared\serializer\test_serializer.py
+tests\shared\serializer\__init__.py
+tests\shared\validators\test_validators.py
+tests\shared\validators\__init__.py
+tests\shared\value_objects\test_value_objects.py
+tests\shared\value_objects\__init__.py
+tests\unit\__init__.py
+tests\unit\ai\test_ai_engine.py
+tests\unit\ai\test_feedback_loop.py
+tests\unit\ai\test_market_regime.py
+tests\unit\ai\test_performance_tracker.py
+tests\unit\ai\test_probability_engine.py
+tests\unit\ai\test_signal_validation.py
+tests\unit\ai\test_weight_optimizer.py
+tests\unit\ai\__init__.py
+tests\unit\analysis\test_breaker_block.py
+tests\unit\analysis\test_break_of_structure.py
+tests\unit\analysis\test_change_of_character.py
+tests\unit\analysis\test_confluence_engine.py
+tests\unit\analysis\test_decision_engine.py
+tests\unit\analysis\test_equal_levels.py
+tests\unit\analysis\test_fair_value_gap.py
+tests\unit\analysis\test_ict_engine.py
+tests\unit\analysis\test_inducement.py
+tests\unit\analysis\test_liquidity_sweep.py
+tests\unit\analysis\test_macd.py
+tests\unit\analysis\test_market_regime.py
+tests\unit\analysis\test_mitigation_block.py
+tests\unit\analysis\test_optimal_trade_entry.py
+tests\unit\analysis\test_order_block.py
+tests\unit\analysis\test_premium_discount.py
+tests\unit\analysis\test_rsi.py
+tests\unit\analysis\test_signal_engine.py
+tests\unit\analysis\__init__.py
+tests\unit\backtest\test_backtest_engine.py
+tests\unit\backtest\test_monte_carlo.py
+tests\unit\backtest\test_parameter_optimizer.py
+tests\unit\backtest\test_report_generator.py
+tests\unit\backtest\test_statistics_engine.py
+tests\unit\backtest\test_strategy_runner.py
+tests\unit\backtest\test_trade_simulator.py
+tests\unit\backtest\test_walk_forward.py
+tests\unit\backtest\__init__.py
+tests\unit\core\test_event_bus.py
+tests\unit\core\__init__.py
+tests\unit\data\test_candle_builder.py
+tests\unit\data\test_data_cache.py
+tests\unit\data\test_data_manager.py
+tests\unit\data\test_data_validator.py
+tests\unit\data\test_market_data.py
+tests\unit\data\test_market_data_feed.py
+tests\unit\data\test_normalizer.py
+tests\unit\data\test_orderbook_manager.py
+tests\unit\data\test_router.py
+tests\unit\data\test_tick_processor.py
+tests\unit\data\test_validator.py
+tests\unit\data\test_websocket_manager.py
+tests\unit\data\__init__.py
+tests\unit\decision\test_confidence_aggregator.py
+tests\unit\decision\test_decision_engine.py
+tests\unit\decision\test_signal_weight_engine.py
+tests\unit\decision\__init__.py
+tests\unit\decision\strategy\test_strategy_engine.py
+tests\unit\decision\strategy\__init__.py
+tests\unit\domain\test_market_data.py
+tests\unit\domain\__init__.py
+tests\unit\drivers\test_paper_driver.py
+tests\unit\drivers\__init__.py
+tests\unit\exchange\test_base_exchange.py
+tests\unit\exchange\test_ccxt_exchange.py
+tests\unit\exchange\test_crypto_connector.py
+tests\unit\exchange\test_manager.py
+tests\unit\exchange\test_ratelimiter.py
+tests\unit\exchange\test_reconnect.py
+tests\unit\exchange\test_websocket.py
+tests\unit\exchange\__init__.py
+tests\unit\execution\test_balance_tracker.py
+tests\unit\execution\test_execution_engine.py
+tests\unit\execution\test_execution_history.py
+tests\unit\execution\test_execution_manager.py
+tests\unit\execution\test_execution_report.py
+tests\unit\execution\test_order_manager.py
+tests\unit\execution\test_order_tracker.py
+tests\unit\execution\test_paper_trading.py
+tests\unit\execution\test_portfolio_manager.py
+tests\unit\execution\test_portfolio_sync.py
+tests\unit\execution\test_position_manager.py
+tests\unit\execution\test_slippage.py
+tests\unit\execution\test_smart_router.py
+tests\unit\execution\__init__.py
+tests\unit\risk\test_circuit_breaker.py
+tests\unit\risk\test_drawdown_guard.py
+tests\unit\risk\test_in_trade_monitor.py
+tests\unit\risk\test_kill_switch.py
+tests\unit\risk\test_portfolio_guard.py
+tests\unit\risk\test_position_sizer.py
+tests\unit\risk\test_pre_trade_validator.py
+tests\unit\risk\test_risk_manager.py
+tests\unit\risk\test_risk_orchestrator.py
+tests\unit\risk\__init__.py
+
+=== EMPTY PYTHON FILES ===
+src\__init__.py
+src\analysis\derivatives\__init__.py
+src\analysis\indicators\macd.py
+src\analysis\intermarket\__init__.py
+src\analysis\onchain\whales.py
+src\analysis\onchain\__init__.py
+src\analysis\orderflow\__init__.py
+src\analysis\sentiment\__init__.py
+src\analysis\smart_money\equal_highs_lows.py
+src\analysis\smart_money\__init__.py
+src\analysis\technical\anchored_vwap.py
+src\analysis\technical\channel.py
+src\analysis\technical\fibonacci.py
+src\analysis\technical\pivot.py
+src\analysis\technical\trendline.py
+src\analysis\technical\__init__.py
+src\config\constants.py
+src\config\__init__.py
+src\core\__init__.py
+src\core\contracts\interfaces.py
+src\core\event_bus\__init__.py
+src\exchange\connectors\init.py
+src\infrastructure\base_connector.py
+src\infrastructure\exchange_connector.py
+src\infrastructure\connectors\failover.py
+src\infrastructure\connectors\news_connector.py
+src\infrastructure\connectors\onchain_connector.py
+src\infrastructure\connectors\sentiment_connector.py
+src\infrastructure\connectors\websocket_connector.py
+src\infrastructure\connectors\__init__.py
+src\intelligence\analyzers\__init__.py
+src\intelligence\trend_discovery\__init__.py
+src\intelligence\watchlist\__init__.py
+src\market\__init__.py
+
+=== LEGACY FILES ===
+src\ai\decision_engine_old.py
+src\ai\market_regime_old.py
+src\ai\scoring_engine_old.py
+src\ai\strategy_selector_old.py
+src\analysis\onchain\holder_profit.py
+src\analysis\onchain\__pycache__\holder_profit.cpython-312.pyc
+
+=== DUPLICATE BASENAMES ===
+
+[__init__.py]
+src\__init__.py
+src\analysis\derivatives\__init__.py
+src\analysis\intermarket\__init__.py
+src\analysis\onchain\__init__.py
+src\analysis\orderflow\__init__.py
+src\analysis\sentiment\__init__.py
+src\analysis\smart_money\__init__.py
+src\analysis\technical\__init__.py
+src\config\__init__.py
+src\core\__init__.py
+src\core\context\__init__.py
+src\core\contracts\__init__.py
+src\core\dependency_injection\__init__.py
+src\core\event_bus\__init__.py
+src\core\exceptions\__init__.py
+src\core\kernel\__init__.py
+src\core\lifecycle\__init__.py
+src\core\registry\__init__.py
+src\core\types\__init__.py
+src\decision\__init__.py
+src\domain\entities\__init__.py
+src\domain\events\__init__.py
+src\domain\value_objects\__init__.py
+src\exchange\__init__.py
+src\infrastructure\connectors\__init__.py
+src\intelligence\analyzers\__init__.py
+src\intelligence\trend_discovery\__init__.py
+src\intelligence\watchlist\__init__.py
+src\logger\__init__.py
+src\market\__init__.py
+src\shared\clock\__init__.py
+src\shared\ids\__init__.py
+src\shared\mapper\__init__.py
+src\shared\result\__init__.py
+src\shared\serializer\__init__.py
+src\shared\validators\__init__.py
+src\shared\value_objects\__init__.py
+
+[market_regime.py]
+src\ai\market_regime.py
+src\analysis\market_regime.py
+src\core\market_regime.py
+
+[decision_engine.py]
+src\analysis\decision_engine.py
+src\core\decision_engine.py
+src\decision\decision_engine.py
+
+[fair_value_gap.py]
+src\analysis\ict\fair_value_gap.py
+src\analysis\smart_money\fair_value_gap.py
+
+[order_block.py]
+src\analysis\ict\order_block.py
+src\analysis\smart_money\order_block.py
+
+[macd.py]
+src\analysis\indicators\macd.py
+src\analysis\technical\macd.py
+
+[exceptions.py]
+src\core\context\exceptions.py
+src\core\dependency_injection\exceptions.py
+src\core\event_bus\exceptions.py
+src\core\registry\exceptions.py
+src\domain\exceptions.py
+src\domain\entities\exceptions.py
+src\domain\value_objects\exceptions.py
+src\exchange\exceptions.py
+src\shared\mapper\exceptions.py
+src\shared\result\exceptions.py
+src\shared\serializer\exceptions.py
+src\shared\validators\exceptions.py
+
+[configuration.py]
+src\core\contracts\configuration.py
+src\core\exceptions\configuration.py
+
+[event_bus.py]
+src\core\contracts\event_bus.py
+src\core\event_bus\event_bus.py
+
+[logger.py]
+src\core\contracts\logger.py
+src\logger\logger.py
+
+[registry.py]
+src\core\contracts\registry.py
+src\core\registry\registry.py
+src\shared\mapper\registry.py
+
+[service.py]
+src\core\contracts\service.py
+src\core\lifecycle\service.py
+
+[types.py]
+src\core\event_bus\types.py
+src\core\registry\types.py
+
+[base.py]
+src\core\exceptions\base.py
+src\domain\base.py
+src\exchange\base.py
+
+[state.py]
+src\core\kernel\state.py
+src\core\lifecycle\state.py
+
+[market_data.py]
+src\data\market_data.py
+src\domain\market_data.py
+src\market\market_data.py
+
+[normalizer.py]
+src\data\normalizer.py
+src\market\normalizer.py
+
+[validator.py]
+src\data\validator.py
+src\infrastructure\connectors\validator.py
+src\shared\validators\validator.py
+
+[models.py]
+src\decision\models.py
+src\exchange\models.py
+
+[money.py]
+src\domain\value_objects\money.py
+src\shared\value_objects\money.py
+
+[price.py]
+src\domain\value_objects\price.py
+src\shared\value_objects\price.py
+
+[quantity.py]
+src\domain\value_objects\quantity.py
+src\shared\value_objects\quantity.py
+
+[symbol.py]
+src\domain\value_objects\symbol.py
+src\shared\value_objects\symbol.py
+
+[engine.py]
+src\intelligence\trend_discovery\engine.py
+src\intelligence\watchlist\engine.py
+
+[result.py]
+src\shared\result\result.py
+src\shared\validators\result.py
+
+=== TEST RESULT ===
+........................................................................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 19%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 39%]
+........................................................................ [ 46%]
+........................................................................ [ 52%]
+........................................................................ [ 59%]
+........................................................................ [ 65%]
+........................................................................ [ 72%]
+........................................................................ [ 78%]
+........................................................................ [ 85%]
+........................................................................ [ 92%]
+........................................................................ [ 98%]
+...............                                                          [100%]
