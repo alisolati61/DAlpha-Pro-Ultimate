@@ -28,9 +28,43 @@ class KillSwitch:
     DEFAULT_REASON = "Manual activation"
 
     def __init__(self) -> None:
-
         self._state = KillSwitchState()
 
+    # --------------------------------------------------
+    # State
+    # --------------------------------------------------
+
+    @property
+    def state(self) -> KillSwitchState:
+        return self._state
+
+    @property
+    def active(self) -> bool:
+        return self._state.active
+
+    @property
+    def reason(self) -> str:
+        return self._state.reason
+
+    @property
+    def activated_at(self) -> datetime | None:
+        return self._state.activated_at
+
+    # --------------------------------------------------
+    # Backward-compatible API
+    # --------------------------------------------------
+
+    def is_active(self) -> bool:
+        """
+        Backward-compatible method for legacy callers.
+
+        Returns:
+            True when the kill switch is active.
+        """
+        return self.active
+
+    # --------------------------------------------------
+    # Activation
     # --------------------------------------------------
 
     def activate(
@@ -42,7 +76,6 @@ class KillSwitch:
             reason,
             str,
         ):
-
             raise TypeError(
                 "Reason must be a string."
             )
@@ -50,59 +83,19 @@ class KillSwitch:
         normalized_reason = reason.strip()
 
         if not normalized_reason:
-
             raise ValueError(
                 "Reason cannot be empty."
             )
 
         self._state = KillSwitchState(
-
             active=True,
-
             reason=normalized_reason,
-
             activated_at=datetime.now(UTC),
-
         )
 
     # --------------------------------------------------
+    # Deactivation
+    # --------------------------------------------------
 
     def deactivate(self) -> None:
-
         self._state = KillSwitchState()
-
-    # --------------------------------------------------
-
-    @property
-    def state(
-        self,
-    ) -> KillSwitchState:
-
-        return self._state
-
-    # --------------------------------------------------
-
-    @property
-    def active(
-        self,
-    ) -> bool:
-
-        return self._state.active
-
-    # --------------------------------------------------
-
-    @property
-    def reason(
-        self,
-    ) -> str:
-
-        return self._state.reason
-
-    # --------------------------------------------------
-
-    @property
-    def activated_at(
-        self,
-    ) -> datetime | None:
-
-        return self._state.activated_at

@@ -30,25 +30,11 @@ class RiskManager:
     """
     Central risk decision layer.
 
-    Delegates:
-
-    - drawdown enforcement to DrawdownGuard;
-    - emergency stop state to KillSwitch;
-    - daily loss and per-trade risk validation to this layer.
-
-    All ratios use fractional notation:
+    Ratios use fractional notation:
 
         0.01 = 1%
         0.05 = 5%
         0.15 = 15%
-
-    Boundary behavior is strict:
-
-        daily_loss == max_daily_loss
-            rejected
-
-        drawdown == max_drawdown
-            rejected
     """
 
     def __init__(
@@ -84,17 +70,16 @@ class RiskManager:
             else KillSwitch()
         )
 
-    # --------------------------------------------------
-
     @staticmethod
     def _validate_ratio(
         value: float,
         name: str,
-        *,
-        allow_zero: bool = True,
     ) -> None:
 
-        if not isinstance(
+        if isinstance(
+            value,
+            bool,
+        ) or not isinstance(
             value,
             (int, float),
         ):
@@ -103,21 +88,19 @@ class RiskManager:
                 f"{name} must be a number."
             )
 
-        if not math.isfinite(value):
+        if not math.isfinite(
+            float(value)
+        ):
 
             raise ValueError(
                 f"{name} must be finite."
             )
 
-        minimum = 0 if allow_zero else 0
-
-        if value < minimum or value > 1:
+        if value <= 0 or value > 1:
 
             raise ValueError(
                 f"{name} must be between 0 and 1."
             )
-
-    # --------------------------------------------------
 
     @classmethod
     def _validate_settings(
@@ -149,33 +132,16 @@ class RiskManager:
             "max_drawdown",
         )
 
-        if settings.max_risk_per_trade == 0:
-
-            raise ValueError(
-                "max_risk_per_trade must be greater than zero."
-            )
-
-        if settings.max_daily_loss == 0:
-
-            raise ValueError(
-                "max_daily_loss must be greater than zero."
-            )
-
-        if settings.max_drawdown == 0:
-
-            raise ValueError(
-                "max_drawdown must be greater than zero."
-            )
-
-    # --------------------------------------------------
-
     @staticmethod
     def _validate_finite(
         value: float,
         name: str,
     ) -> None:
 
-        if not isinstance(
+        if isinstance(
+            value,
+            bool,
+        ) or not isinstance(
             value,
             (int, float),
         ):
@@ -184,13 +150,13 @@ class RiskManager:
                 f"{name} must be a number."
             )
 
-        if not math.isfinite(value):
+        if not math.isfinite(
+            float(value)
+        ):
 
             raise ValueError(
                 f"{name} must be finite."
             )
-
-    # --------------------------------------------------
 
     def calculate_risk_amount(
         self,
@@ -213,8 +179,6 @@ class RiskManager:
             * self.settings.max_risk_per_trade
         )
 
-    # --------------------------------------------------
-
     def check_daily_loss(
         self,
         daily_loss: float,
@@ -236,8 +200,6 @@ class RiskManager:
             < self.settings.max_daily_loss
         )
 
-    # --------------------------------------------------
-
     def check_drawdown(
         self,
         peak_balance: float,
@@ -258,8 +220,6 @@ class RiskManager:
 
             return False
 
-    # --------------------------------------------------
-
     def activate_kill_switch(
         self,
         reason: str = "Risk manager activation",
@@ -274,8 +234,6 @@ class RiskManager:
             reason
         )
 
-    # --------------------------------------------------
-
     def deactivate_kill_switch(
         self,
     ) -> None:
@@ -286,14 +244,24 @@ class RiskManager:
 
         self.kill_switch.deactivate()
 
-    # --------------------------------------------------
-
     def can_trade(
         self,
         daily_loss: float,
-        peak_balance: float,
-        current_balance: float,
+        peak_balance: float | None = None,
+        current_balance: float | None = None,
     ) -> bool:
+
+        if (
+            peak_balance is None
+            or current_balance is None
+        ):
+
+            return (
+                not self.kill_switch.active
+                and self.check_daily_loss(
+                    daily_loss
+                )
+            )
 
         return (
             self.status(
@@ -303,8 +271,6 @@ class RiskManager:
             )
             == RiskStatus.OK
         )
-
-    # --------------------------------------------------
 
     def status(
         self,

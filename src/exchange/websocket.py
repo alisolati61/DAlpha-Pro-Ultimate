@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Awaitable, Callable
 
 from src.exchange.reconnect import ReconnectManager
 
 
-class ExchangeWebSocket:
+class WebSocketManager:
     """
-    Generic WebSocket controller.
+    Generic exchange-independent WebSocket manager.
 
-    This class is exchange-independent and will later
-    be extended by Binance, Bybit, OKX, etc.
+    Provides:
+    - connect
+    - disconnect
+    - reconnect
+    - connection state tracking
+    - message handler dispatch
     """
 
     def __init__(
@@ -21,42 +24,47 @@ class ExchangeWebSocket:
 
         self._connected = False
 
-        self._reconnect = reconnect or ReconnectManager()
-
-    # -----------------------------------------------------
+        self._reconnect = (
+            reconnect
+            if reconnect is not None
+            else ReconnectManager()
+        )
 
     @property
-    def connected(self) -> bool:
+    def connected(
+        self,
+    ) -> bool:
 
         return self._connected
 
-    # -----------------------------------------------------
-
-    async def connect(self) -> bool:
+    async def connect(
+        self,
+    ) -> bool:
 
         self._connected = True
 
         return True
 
-    # -----------------------------------------------------
-
-    async def disconnect(self) -> None:
+    async def disconnect(
+        self,
+    ) -> None:
 
         self._connected = False
 
-    # -----------------------------------------------------
-
-    async def reconnect(self) -> bool:
+    async def reconnect(
+        self,
+    ) -> bool:
 
         return await self._reconnect.run(
             self.connect,
         )
 
-    # -----------------------------------------------------
-
     async def listen(
         self,
-        handler: Callable[[dict], Awaitable[None]],
+        handler: Callable[
+            [dict],
+            Awaitable[None],
+        ],
     ) -> None:
 
         if not self._connected:
@@ -66,3 +74,7 @@ class ExchangeWebSocket:
             )
 
         await handler({})
+
+
+# Backward-compatible alias.
+ExchangeWebSocket = WebSocketManager

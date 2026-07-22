@@ -6,52 +6,122 @@ import time
 
 class RateLimiter:
     """
-    Simple async token-bucket rate limiter.
+    Async rate limiter.
 
-    Example
-    -------
-    limiter = RateLimiter(10)
-
-    await limiter.acquire()
+    requests_per_second=2
+    یعنی حداقل 0.5 ثانیه فاصله بین درخواست‌ها.
     """
 
     def __init__(
         self,
-        requests_per_second: float,
+        requests_per_second: float = 1.0,
     ) -> None:
 
-        if requests_per_second <= 0:
-            raise ValueError(
-                "requests_per_second must be positive."
+        if isinstance(
+            requests_per_second,
+            bool,
+        ):
+
+            raise TypeError(
+                "requests_per_second must be numeric."
             )
 
-        self._interval = 1.0 / requests_per_second
+        if not isinstance(
+            requests_per_second,
+            (int, float),
+        ):
 
-        self._last_request = 0.0
+            raise TypeError(
+                "requests_per_second must be numeric."
+            )
+
+        if requests_per_second <= 0:
+
+            raise ValueError(
+                "requests_per_second must be greater than zero."
+            )
+
+        self.requests_per_second = float(
+            requests_per_second,
+        )
+
+        self.interval = (
+            1.0
+            / self.requests_per_second
+        )
+
+        self._last_request_at: float | None = None
 
         self._lock = asyncio.Lock()
 
-    # ------------------------------------------------
+    # ==================================================
+    # ASYNC API
+    # ==================================================
 
-    async def acquire(self) -> None:
+    async def acquire(
+        self,
+    ) -> None:
 
         async with self._lock:
 
-            now = time.perf_counter()
+            now = time.monotonic()
 
-            elapsed = now - self._last_request
+            if (
+                self._last_request_at
+                is not None
+            ):
 
-            wait = self._interval - elapsed
+                elapsed = (
+                    now
+                    - self._last_request_at
+                )
 
-            if wait > 0:
+                remaining = (
+                    self.interval
+                    - elapsed
+                )
 
-                await asyncio.sleep(wait)
+                if remaining > 0:
 
-            self._last_request = time.perf_counter()
+                    await asyncio.sleep(
+                        remaining,
+                    )
 
-    # ------------------------------------------------
+            self._last_request_at = (
+                time.monotonic()
+            )
 
-    @property
-    def interval(self) -> float:
+    # ==================================================
+    # SYNC COMPATIBILITY API
+    # ==================================================
 
-        return self._interval
+    def wait(
+        self,
+    ) -> None:
+
+        now = time.monotonic()
+
+        if (
+            self._last_request_at
+            is not None
+        ):
+
+            elapsed = (
+                now
+                - self._last_request_at
+            )
+
+            remaining = (
+                self.interval
+                - elapsed
+            )
+
+            if remaining > 0:
+
+                time.sleep(
+                    remaining,
+                )
+
+        self._last_request_at = (
+            time.monotonic()
+        )
