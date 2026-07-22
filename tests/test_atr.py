@@ -1,10 +1,11 @@
+import pytest
+
 from src.analysis.technical.atr import ATRAnalyzer
 from src.domain.candle import Candle
 from src.domain.candle_series import CandleSeries
 
 
-def create_series():
-
+def create_series() -> CandleSeries:
     series = CandleSeries(
         symbol="BTC/USDT",
         timeframe="1h",
@@ -28,15 +29,14 @@ def create_series():
         (134, 138, 133, 137),
     ]
 
-    for i, (o, h, l, c) in enumerate(prices):
-
+    for index, (open_, high, low, close) in enumerate(prices):
         series.add(
             Candle(
-                timestamp=i,
-                open=o,
-                high=h,
-                low=l,
-                close=c,
+                timestamp=index,
+                open=open_,
+                high=high,
+                low=low,
+                close=close,
                 volume=1000,
             )
         )
@@ -44,21 +44,44 @@ def create_series():
     return series
 
 
-def test_atr():
-
-    series = create_series()
-
-    atr = ATRAnalyzer.calculate(series)
+def test_atr() -> None:
+    atr = ATRAnalyzer.calculate(create_series())
 
     assert atr is not None
-
     assert atr > 0
 
 
-def test_volatility_score():
-
+def test_atr_returns_none_when_data_is_insufficient() -> None:
     series = create_series()
 
-    score = ATRAnalyzer.volatility_score(series)
+    assert ATRAnalyzer.calculate(series, period=15) is None
+
+
+def test_atr_rejects_zero_period() -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        ATRAnalyzer.calculate(create_series(), period=0)
+
+
+def test_atr_rejects_negative_period() -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        ATRAnalyzer.calculate(create_series(), period=-1)
+
+
+def test_atr_rejects_non_integer_period() -> None:
+    with pytest.raises(TypeError, match="integer"):
+        ATRAnalyzer.calculate(create_series(), period=14.5)
+
+
+def test_volatility_score() -> None:
+    score = ATRAnalyzer.volatility_score(create_series())
 
     assert 0 <= score <= 100
+
+
+def test_volatility_score_returns_neutral_when_data_is_insufficient() -> None:
+    series = CandleSeries(
+        symbol="BTC/USDT",
+        timeframe="1h",
+    )
+
+    assert ATRAnalyzer.volatility_score(series) == 50.0

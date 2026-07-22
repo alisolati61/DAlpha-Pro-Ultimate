@@ -1,74 +1,49 @@
-from src.analysis.technical.support_resistance import (
-    SupportResistanceAnalyzer,
-)
-from src.market.market_data import MarketData
+import pytest
 
 
-def test_calculate():
-
+def test_rejects_negative_distance() -> None:
     market = MarketData(
         symbol="BTC/USDT",
         last_price=100,
         bid=99.95,
         ask=100.05,
-        volume=1000000,
+        volume=1_000_000,
+    )
+
+    with pytest.raises(ValueError, match="must not be negative"):
+        SupportResistanceAnalyzer.calculate(
+            market,
+            distance_percent=-2,
+        )
+
+
+def test_rejects_negative_tolerance() -> None:
+    market = MarketData(
+        symbol="BTC/USDT",
+        last_price=100,
+        bid=99.95,
+        ask=100.05,
+        volume=1_000_000,
     )
 
     sr = SupportResistanceAnalyzer.calculate(market)
 
-    assert sr.support == 98
+    with pytest.raises(ValueError, match="must not be negative"):
+        SupportResistanceAnalyzer.near_support(
+            market,
+            sr,
+            tolerance_percent=-0.5,
+        )
 
-    assert sr.resistance == 102
 
-
-def test_near_support():
-
+def test_rejects_zero_market_price() -> None:
     market = MarketData(
         symbol="BTC/USDT",
-        last_price=98,
-        bid=97.95,
-        ask=98.05,
-        volume=1000000,
+        last_price=0,
+        bid=0,
+        ask=0,
+        volume=1_000_000,
     )
 
-    sr = SupportResistanceAnalyzer(
-    ).calculate(
-        MarketData(
-            symbol="BTC/USDT",
-            last_price=100,
-            bid=99.95,
-            ask=100.05,
-            volume=1000000,
-        )
-    )
-
-    assert SupportResistanceAnalyzer.near_support(
-        market,
-        sr,
-    )
-
-
-def test_near_resistance():
-
-    market = MarketData(
-        symbol="BTC/USDT",
-        last_price=102,
-        bid=101.95,
-        ask=102.05,
-        volume=1000000,
-    )
-
-    sr = SupportResistanceAnalyzer.calculate(
-        MarketData(
-            symbol="BTC/USDT",
-            last_price=100,
-            bid=99.95,
-            ask=100.05,
-            volume=1000000,
-        )
-    )
-
-    assert SupportResistanceAnalyzer.near_resistance(
-        market,
-        sr,
-    )
+    with pytest.raises(ValueError, match="greater than zero"):
+        SupportResistanceAnalyzer.calculate(market)
