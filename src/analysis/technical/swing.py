@@ -1,18 +1,27 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Literal
 
 from src.domain.candle_series import CandleSeries
 
 
-@dataclass(slots=True)
+SwingKind = Literal["HIGH", "LOW"]
+
+
+@dataclass(frozen=True, slots=True)
 class SwingPoint:
     index: int
     price: float
-    kind: str  # HIGH | LOW
+    kind: SwingKind
 
 
 class SwingAnalyzer:
     """
-    Detect Swing Highs and Swing Lows.
+    Detect swing highs and swing lows.
+
+    A candle is considered a swing point when its high or low is equal
+    to or more extreme than all candles on both sides within lookback.
 
     Foundation for:
     - BOS
@@ -22,97 +31,123 @@ class SwingAnalyzer:
     """
 
     @staticmethod
+    def _validate_inputs(
+        series: CandleSeries,
+        lookback: int,
+    ) -> None:
+        if not isinstance(series, CandleSeries):
+            raise TypeError("series must be a CandleSeries instance")
+
+        if isinstance(lookback, bool) or not isinstance(lookback, int):
+            raise TypeError("lookback must be an integer")
+
+        if lookback <= 0:
+            raise ValueError("lookback must be greater than zero")
+
+    @classmethod
     def highs(
+        cls,
         series: CandleSeries,
         lookback: int = 2,
     ) -> list[SwingPoint]:
+        cls._validate_inputs(series, lookback)
 
         candles = series.candles
-        swings = []
+        required_candles = lookback * 2 + 1
 
-        if len(candles) < (lookback * 2 + 1):
-            return swings
+        if len(candles) < required_candles:
+            return []
 
-        for i in range(lookback, len(candles) - lookback):
+        swings: list[SwingPoint] = []
 
-            current = candles[i].high
+        for index in range(lookback, len(candles) - lookback):
+            current_high = candles[index].high
 
-            left = [
-                candles[j].high
-                for j in range(i - lookback, i)
+            left_highs = [
+                candles[position].high
+                for position in range(index - lookback, index)
+            ]
+            right_highs = [
+                candles[position].high
+                for position in range(
+                    index + 1,
+                    index + lookback + 1,
+                )
             ]
 
-            right = [
-                candles[j].high
-                for j in range(i + 1, i + lookback + 1)
-            ]
-
-            if current >= max(left) and current >= max(right):
-
+            if (
+                current_high >= max(left_highs)
+                and current_high >= max(right_highs)
+            ):
                 swings.append(
                     SwingPoint(
-                        index=i,
-                        price=current,
+                        index=index,
+                        price=current_high,
                         kind="HIGH",
                     )
                 )
 
         return swings
 
-    @staticmethod
+    @classmethod
     def lows(
+        cls,
         series: CandleSeries,
         lookback: int = 2,
     ) -> list[SwingPoint]:
+        cls._validate_inputs(series, lookback)
 
         candles = series.candles
-        swings = []
+        required_candles = lookback * 2 + 1
 
-        if len(candles) < (lookback * 2 + 1):
-            return swings
+        if len(candles) < required_candles:
+            return []
 
-        for i in range(lookback, len(candles) - lookback):
+        swings: list[SwingPoint] = []
 
-            current = candles[i].low
+        for index in range(lookback, len(candles) - lookback):
+            current_low = candles[index].low
 
-            left = [
-                candles[j].low
-                for j in range(i - lookback, i)
+            left_lows = [
+                candles[position].low
+                for position in range(index - lookback, index)
+            ]
+            right_lows = [
+                candles[position].low
+                for position in range(
+                    index + 1,
+                    index + lookback + 1,
+                )
             ]
 
-            right = [
-                candles[j].low
-                for j in range(i + 1, i + lookback + 1)
-            ]
-
-            if current <= min(left) and current <= min(right):
-
+            if (
+                current_low <= min(left_lows)
+                and current_low <= min(right_lows)
+            ):
                 swings.append(
                     SwingPoint(
-                        index=i,
-                        price=current,
+                        index=index,
+                        price=current_low,
                         kind="LOW",
                     )
                 )
 
         return swings
 
-    @staticmethod
+    @classmethod
     def latest_high(
+        cls,
         series: CandleSeries,
         lookback: int = 2,
     ) -> SwingPoint | None:
+        swing_highs = cls.highs(series, lookback)
+        return swing_highs[-1] if swing_highs else None
 
-        highs = SwingAnalyzer.highs(series, lookback)
-
-        return highs[-1] if highs else None
-
-    @staticmethod
+    @classmethod
     def latest_low(
+        cls,
         series: CandleSeries,
         lookback: int = 2,
     ) -> SwingPoint | None:
-
-        lows = SwingAnalyzer.lows(series, lookback)
-
-        return lows[-1] if lows else None
+        swing_lows = cls.lows(series, lookback)
+        return swing_lows[-1] if swing_lows else None
