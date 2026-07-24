@@ -1,16 +1,81 @@
+"""Deterministic generic pre-trade validation.
+
+This module validates position-level constraints that do not require knowledge
+of trade direction:
+
+- position size;
+- leverage;
+- entry price;
+- stop-loss price;
+- entry and stop-loss inequality.
+
+Direction-specific rules, exchange filters, margin calculations, and portfolio
+limits belong to higher-level risk and order-normalization layers.
+"""
+
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
+from math import isfinite
+from numbers import Real
+
+_MAX_REASON_LENGTH = 500
 
 
 @dataclass(frozen=True, slots=True)
 class ValidationResult:
+    """Immutable result of a pre-trade validation."""
+
     approved: bool
     reason: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.approved, bool):
+            raise TypeError(
+                "approved must be a bool"
+            )
+
+        if self.reason is not None and not isinstance(
+            self.reason,
+            str,
+        ):
+            raise TypeError(
+                "reason must be a string or None"
+            )
+
+        reason = (
+            None
+            if self.reason is None
+            else self.reason.strip()
+        )
+
+        if self.approved:
+            if reason is not None:
+                raise ValueError(
+                    "approved result must not have a reason"
+                )
+        else:
+            if not reason:
+                raise ValueError(
+                    "rejected result requires a reason"
+                )
+
+            if len(reason) > _MAX_REASON_LENGTH:
+                raise ValueError(
+                    "reason must not exceed "
+                    f"{_MAX_REASON_LENGTH} characters"
+                )
+
+        object.__setattr__(
+            self,
+            "reason",
+            reason,
+        )
+
     @classmethod
     def approve(cls) -> ValidationResult:
+        """Create an approved result."""
+
         return cls(
             approved=True,
             reason=None,
@@ -21,175 +86,173 @@ class ValidationResult:
         cls,
         reason: str,
     ) -> ValidationResult:
+        """Create a rejected result with a normalized reason."""
+
         return cls(
             approved=False,
             reason=reason,
         )
 
+    @property
+    def rejected(self) -> bool:
+        """Return whether validation failed."""
+
+        return not self.approved
+
 
 class PreTradeValidator:
-    """
-    Performs deterministic pre-trade validations.
+    """Validate generic position-level limits before order execution."""
 
-    This validator checks generic constraints only:
+    INVALID_POSITION_SIZE_REASON = (
+        "Position size must be a finite number "
+        "greater than zero."
+    )
+    POSITION_SIZE_LIMIT_REASON = (
+        "Position size exceeds maximum allowed."
+    )
+    INVALID_LEVERAGE_REASON = (
+        "Leverage must be a finite number "
+        "greater than zero."
+    )
+    LEVERAGE_LIMIT_REASON = (
+        "Leverage exceeds maximum allowed."
+    )
+    INVALID_ENTRY_PRICE_REASON = (
+        "Entry price must be a finite number "
+        "greater than zero."
+    )
+    INVALID_STOP_LOSS_REASON = (
+        "Stop loss must be a finite number "
+        "greater than zero."
+    )
+    EQUAL_STOP_REASON = (
+        "Stop loss cannot equal entry price."
+    )
 
-    - position size
-    - leverage
-    - entry price
-    - stop-loss price
-
-    Direction-specific checks, such as whether a stop-loss
-    is correctly placed below entry for a long position, should
-    be performed by a higher-level order/risk policy that knows
-    the trade side.
-    """
+    __slots__ = (
+        "max_leverage",
+        "max_position_size",
+    )
 
     def __init__(
         self,
         max_position_size: float,
         max_leverage: float,
     ) -> None:
-
-        self._validate_positive_finite(
-            max_position_size,
-            "max_position_size",
-        )
-
-        self._validate_positive_finite(
-            max_leverage,
-            "max_leverage",
-        )
-
-        self.max_position_size = float(
-            max_position_size
-        )
-
-        self.max_leverage = float(
-            max_leverage
-        )
-
-    # --------------------------------------------------
-
-    @staticmethod
-    def _validate_positive_finite(
-        value: float,
-        name: str,
-    ) -> None:
-
-        if not isinstance(value, (int, float)):
-
-            raise TypeError(
-                f"{name} must be a number."
+        self.max_position_size = (
+            _validate_positive_finite_configuration(
+                max_position_size,
+                "max_position_size",
             )
-
-        if not math.isfinite(value):
-
-            raise ValueError(
-                f"{name} must be finite."
-            )
-
-        if value <= 0:
-
-            raise ValueError(
-                f"{name} must be greater than zero."
-            )
-
-    # --------------------------------------------------
-
-    @staticmethod
-    def _is_positive_finite(
-        value: float,
-    ) -> bool:
-
-        return (
-
-            isinstance(value, (int, float))
-
-            and math.isfinite(value)
-
-            and value > 0
-
         )
-
-    # --------------------------------------------------
+        self.max_leverage = (
+            _validate_positive_finite_configuration(
+                max_leverage,
+                "max_leverage",
+            )
+        )
 
     def validate_position_size(
         self,
         position_size: float,
     ) -> ValidationResult:
+        """Validate positive finite size against the configured ceiling."""
 
-        if not self._is_positive_finite(
-            position_size
-        ):
+        size = _coerce_positive_finite(
+            position_size,
+        )
 
+        if size is None:
             return ValidationResult.reject(
-                "Position size must be a finite number greater than zero."
+                self.INVALID_POSITION_SIZE_REASON
             )
 
-        if position_size > self.max_position_size:
-
+        if size > self.max_position_size:
             return ValidationResult.reject(
-                "Position size exceeds maximum allowed."
+                self.POSITION_SIZE_LIMIT_REASON
             )
 
         return ValidationResult.approve()
-
-    # --------------------------------------------------
 
     def validate_leverage(
         self,
         leverage: float,
     ) -> ValidationResult:
+        """Validate positive finite leverage against the configured ceiling."""
 
-        if not self._is_positive_finite(
-            leverage
-        ):
+        normalized_leverage = _coerce_positive_finite(
+            leverage,
+        )
 
+        if normalized_leverage is None:
             return ValidationResult.reject(
-                "Leverage must be a finite number greater than zero."
+                self.INVALID_LEVERAGE_REASON
             )
 
-        if leverage > self.max_leverage:
-
+        if normalized_leverage > self.max_leverage:
             return ValidationResult.reject(
-                "Leverage exceeds maximum allowed."
+                self.LEVERAGE_LIMIT_REASON
             )
 
         return ValidationResult.approve()
 
-    # --------------------------------------------------
+    def validate_entry_price(
+        self,
+        entry_price: float,
+    ) -> ValidationResult:
+        """Validate that entry price is positive and finite."""
+
+        if _coerce_positive_finite(
+            entry_price,
+        ) is None:
+            return ValidationResult.reject(
+                self.INVALID_ENTRY_PRICE_REASON
+            )
+
+        return ValidationResult.approve()
+
+    def validate_stop_loss_price(
+        self,
+        stop_loss: float,
+    ) -> ValidationResult:
+        """Validate that stop-loss price is positive and finite."""
+
+        if _coerce_positive_finite(
+            stop_loss,
+        ) is None:
+            return ValidationResult.reject(
+                self.INVALID_STOP_LOSS_REASON
+            )
+
+        return ValidationResult.approve()
 
     def validate_stop_loss(
         self,
         entry_price: float,
         stop_loss: float,
     ) -> ValidationResult:
+        """Validate entry, stop loss, and their inequality."""
 
-        if not self._is_positive_finite(
-            entry_price
-        ):
+        result = self.validate_entry_price(
+            entry_price,
+        )
 
+        if not result.approved:
+            return result
+
+        result = self.validate_stop_loss_price(
+            stop_loss,
+        )
+
+        if not result.approved:
+            return result
+
+        if float(entry_price) == float(stop_loss):
             return ValidationResult.reject(
-                "Entry price must be a finite number greater than zero."
-            )
-
-        if not self._is_positive_finite(
-            stop_loss
-        ):
-
-            return ValidationResult.reject(
-                "Stop loss must be a finite number greater than zero."
-            )
-
-        if entry_price == stop_loss:
-
-            return ValidationResult.reject(
-                "Stop loss cannot equal entry price."
+                self.EQUAL_STOP_REASON
             )
 
         return ValidationResult.approve()
-
-    # --------------------------------------------------
 
     def validate(
         self,
@@ -198,30 +261,181 @@ class PreTradeValidator:
         entry_price: float,
         stop_loss: float,
     ) -> ValidationResult:
+        """Validate a trade in deterministic first-failure order."""
 
-        result = self.validate_position_size(
-            position_size
+        validations = (
+            self.validate_position_size(
+                position_size,
+            ),
+            self.validate_leverage(
+                leverage,
+            ),
+            self.validate_stop_loss(
+                entry_price,
+                stop_loss,
+            ),
         )
 
-        if not result.approved:
-
-            return result
-
-        result = self.validate_leverage(
-            leverage
-        )
-
-        if not result.approved:
-
-            return result
-
-        result = self.validate_stop_loss(
-            entry_price,
-            stop_loss,
-        )
-
-        if not result.approved:
-
-            return result
+        for result in validations:
+            if not result.approved:
+                return result
 
         return ValidationResult.approve()
+
+    def validate_all(
+        self,
+        position_size: float,
+        leverage: float,
+        entry_price: float,
+        stop_loss: float,
+    ) -> tuple[ValidationResult, ...]:
+        """Return every failed validation in deterministic order.
+
+        A fully valid trade returns a one-item tuple containing an approved
+        result. This method is diagnostic; execution paths should normally use
+        :meth:`validate`.
+        """
+
+        results = (
+            self.validate_position_size(
+                position_size,
+            ),
+            self.validate_leverage(
+                leverage,
+            ),
+            self.validate_stop_loss(
+                entry_price,
+                stop_loss,
+            ),
+        )
+
+        failures = tuple(
+            result
+            for result in results
+            if not result.approved
+        )
+
+        if failures:
+            return failures
+
+        return (
+            ValidationResult.approve(),
+        )
+
+    def position_size_utilization(
+        self,
+        position_size: float,
+    ) -> float:
+        """Return size as a fraction of the configured maximum.
+
+        Unlike validation methods, this diagnostic helper raises for invalid
+        input rather than converting it into a rejection result.
+        """
+
+        size = _require_positive_finite_runtime(
+            position_size,
+            "position_size",
+        )
+
+        return float(
+            size
+            / self.max_position_size
+        )
+
+    def leverage_utilization(
+        self,
+        leverage: float,
+    ) -> float:
+        """Return leverage as a fraction of the configured maximum."""
+
+        normalized_leverage = (
+            _require_positive_finite_runtime(
+                leverage,
+                "leverage",
+            )
+        )
+
+        return float(
+            normalized_leverage
+            / self.max_leverage
+        )
+
+
+def _validate_positive_finite_configuration(
+    value: object,
+    name: str,
+) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+    ):
+        raise TypeError(
+            f"{name} must be a number."
+        )
+
+    number = float(value)
+
+    if not isfinite(number):
+        raise ValueError(
+            f"{name} must be finite."
+        )
+
+    if number <= 0.0:
+        raise ValueError(
+            f"{name} must be greater than zero."
+        )
+
+    return number
+
+
+def _coerce_positive_finite(
+    value: object,
+) -> float | None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+    ):
+        return None
+
+    number = float(value)
+
+    if (
+        not isfinite(number)
+        or number <= 0.0
+    ):
+        return None
+
+    return number
+
+
+def _require_positive_finite_runtime(
+    value: object,
+    name: str,
+) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+    ):
+        raise TypeError(
+            f"{name} must be a number."
+        )
+
+    number = float(value)
+
+    if not isfinite(number):
+        raise ValueError(
+            f"{name} must be finite."
+        )
+
+    if number <= 0.0:
+        raise ValueError(
+            f"{name} must be greater than zero."
+        )
+
+    return number
+
+
+__all__ = (
+    "PreTradeValidator",
+    "ValidationResult",
+)
