@@ -1,23 +1,26 @@
-# src/exchange/exchange_factory.py (فایل جدید)
-"""
-Exchange Adapter Factory.
-Creates appropriate exchange adapter based on configuration.
-Easily extensible for new exchanges.
-"""
+"""Deterministic factory for asynchronous exchange adapters."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
-from typing import Optional, Type
+from threading import RLock
+from typing import Any, ClassVar
 
-from src.exchange.bingx_adapter import BingXAdapter
+from src.exchange.base import BaseExchange
+from src.exchange.ccxt_exchange import CCXTExchange
 from src.exchange.exceptions import ExchangeError
-from src.interfaces.exchange_interface import ExchangeInterface
-from src.logger.logger import app_logger
+
+ExchangeBuilder = Callable[..., BaseExchange]
 
 
 class ExchangeType(str, Enum):
-    """Supported exchange types."""
+    """Known exchange identifiers.
+
+    ``PAPER`` is reserved until the paper driver implements ``BaseExchange``.
+    It is intentionally not part of the default factory registry.
+    """
+
     BINGX = "bingx"
     BINANCE = "binance"
     BYBIT = "bybit"
@@ -26,94 +29,165 @@ class ExchangeType(str, Enum):
     PAPER = "paper"
 
 
+def _ccxt_builder(exchange_name: str) -> ExchangeBuilder:
+    """Create a late-bound builder for one CCXT exchange."""
+
+    def build(**config: Any) -> BaseExchange:
+        return CCXTExchange(exchange_name, **config)
+
+    return build
+
+
+_DEFAULT_BUILDERS: dict[str, ExchangeBuilder] = {
+    exchange_type.value: _ccxt_builder(exchange_type.value)
+    for exchange_type in (
+        ExchangeType.BINGX,
+        ExchangeType.BINANCE,
+        ExchangeType.BYBIT,
+        ExchangeType.OKX,
+        ExchangeType.KUCOIN,
+    )
+}
+
+
 class ExchangeFactory:
-    """
-    Factory for creating exchange adapters.
-    
-    Usage:
-        adapter = ExchangeFactory.create(ExchangeType.BINGX)
-        adapter = ExchangeFactory.create("bingx", api_key="...", api_secret="...")
-    """
-    
-    _adapters: dict[ExchangeType, Type[ExchangeInterface]] = {
-        ExchangeType.BINGX: BingXAdapter,
-        # Future exchanges:
-        # ExchangeType.BINANCE: BinanceAdapter,
-        # ExchangeType.BYBIT: BybitAdapter,
-        # ExchangeType.OKX: OKXAdapter,
-        ExchangeType.PAPER: None,  # Will use PaperDriver
-    }
-    
+    """Create ``BaseExchange`` adapters from a controlled registry."""
+
+    _builders: ClassVar[dict[str, ExchangeBuilder]] = dict(
+        _DEFAULT_BUILDERS
+    )
+    _registry_lock: ClassVar[RLock] = RLock()
+
     @classmethod
     def create(
         cls,
         exchange_type: ExchangeType | str,
-        api_key: Optional[str] = None,
-        api_secret: Optional[str] = None,
-        demo_mode: Optional[bool] = None,
-        **kwargs,
-    ) -> ExchangeInterface:
-        """
-        Create an exchange adapter.
-        
-        Args:
-            exchange_type: Type of exchange
-            api_key: API key (optional, falls back to env)
-            api_secret: API secret (optional, falls back to env)
-            demo_mode: Use demo/sandbox mode
-            **kwargs: Additional exchange-specific parameters
-            
-        Returns:
-            Configured exchange adapter
-            
-        Raises:
-            ExchangeError: If exchange type is not supported
-        """
-        if isinstance(exchange_type, str):
-            try:
-                exchange_type = ExchangeType(exchange_type.lower())
-            except ValueError:
-                raise ExchangeError(
-                    message=f"Unsupported exchange: {exchange_type}. "
-                    f"Supported: {[e.value for e in ExchangeType]}",
-                    exchange=str(exchange_type),
-                )
-        
-        adapter_class = cls._adapters.get(exchange_type)
-        
-        if adapter_class is None:
-            if exchange_type == ExchangeType.PAPER:
-                from src.drivers.paper_driver import PaperDriver
-                return PaperDriver()
-            
+        **config: Any,
+    ) -> BaseExchange:
+        """Create an adapter without opening its network connection."""
+
+        exchange_name = cls._normalize_exchange_name(exchange_type)
+
+        with cls._registry_lock:
+            builder = cls._builders.get(exchange_name)
+
+        if builder is None:
+            supported = ", ".join(cls.supported_exchanges()) or "none"
             raise ExchangeError(
-                message=f"Adapter not implemented for {exchange_type.value}",
-                exchange=exchange_type.value,
+                message=(
+                    f"Unsupported exchange: {exchange_name}. "
+                    f"Registered exchanges: {supported}"
+                ),
+                exchange=exchange_name,
             )
-        
-        app_logger.info(
-            f"Creating {exchange_type.value.upper()} adapter | "
-            f"Demo: {demo_mode}"
-        )
-        
-        return adapter_class(
-            api_key=api_key,
-            api_secret=api_secret,
-            demo_mode=demo_mode,
-            **kwargs,
-    )
-    
+
+        try:
+            exchange = builder(**config)
+        except ExchangeError:
+            raise
+        except Exception as exc:
+            raise ExchangeError(
+                message=(
+                    f"Failed to create exchange adapter: "
+                    f"{exchange_name}"
+                ),
+                exchange=exchange_name,
+            ) from exc
+
+        if not isinstance(exchange, BaseExchange):
+            raise TypeError(
+                "Exchange builder must return a BaseExchange instance: "
+                f"{exchange_name}"
+            )
+
+        return exchange
+
     @classmethod
     def register(
         cls,
-        exchange_type: ExchangeType,
-        adapter_class: Type[ExchangeInterface],
+        exchange_type: ExchangeType | str,
+        builder: ExchangeBuilder,
+        *,
+        replace: bool = False,
     ) -> None:
-        """Register a new exchange adapter (for plugins)."""
-        cls._adapters[exchange_type] = adapter_class
-        app_logger.info(f"Registered adapter for {exchange_type.value}")
-    
+        """Register a builder under a normalized exchange identifier."""
+
+        exchange_name = cls._normalize_exchange_name(exchange_type)
+
+        if not callable(builder):
+            raise TypeError("Exchange builder must be callable.")
+
+        with cls._registry_lock:
+            if exchange_name in cls._builders and not replace:
+                raise ValueError(
+                    f"Exchange builder is already registered: "
+                    f"{exchange_name}"
+                )
+
+            cls._builders[exchange_name] = builder
+
+    @classmethod
+    def unregister(
+        cls,
+        exchange_type: ExchangeType | str,
+    ) -> ExchangeBuilder:
+        """Remove and return a registered builder."""
+
+        exchange_name = cls._normalize_exchange_name(exchange_type)
+
+        with cls._registry_lock:
+            try:
+                return cls._builders.pop(exchange_name)
+            except KeyError as exc:
+                raise ExchangeError(
+                    message=(
+                        f"Exchange builder is not registered: "
+                        f"{exchange_name}"
+                    ),
+                    exchange=exchange_name,
+                ) from exc
+
+    @classmethod
+    def is_registered(
+        cls,
+        exchange_type: ExchangeType | str,
+    ) -> bool:
+        """Return whether a builder exists for the exchange identifier."""
+
+        exchange_name = cls._normalize_exchange_name(exchange_type)
+
+        with cls._registry_lock:
+            return exchange_name in cls._builders
+
     @classmethod
     def supported_exchanges(cls) -> list[str]:
-        """Get list of supported exchange names."""
-        return [e.value for e in cls._adapters.keys()]
+        """Return registered exchange names in deterministic order."""
+
+        with cls._registry_lock:
+            return sorted(cls._builders)
+
+    @staticmethod
+    def _normalize_exchange_name(
+        exchange_type: ExchangeType | str,
+    ) -> str:
+        if isinstance(exchange_type, ExchangeType):
+            return exchange_type.value
+
+        if not isinstance(exchange_type, str):
+            raise TypeError(
+                "Exchange type must be an ExchangeType or string."
+            )
+
+        exchange_name = exchange_type.strip().casefold()
+
+        if not exchange_name:
+            raise ValueError("Exchange type cannot be empty.")
+
+        return exchange_name
+
+
+__all__ = (
+    "ExchangeBuilder",
+    "ExchangeFactory",
+    "ExchangeType",
+)
