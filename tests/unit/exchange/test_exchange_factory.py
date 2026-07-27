@@ -69,17 +69,80 @@ class FakeExchange(BaseExchange):
 
 @pytest.fixture(autouse=True)
 def restore_factory_registry() -> Iterator[None]:
-    with ExchangeFactory._registry_lock:
-        snapshot = dict(ExchangeFactory._builders)
+    ExchangeFactory.restore_defaults()
 
     try:
         yield
     finally:
-        with ExchangeFactory._registry_lock:
-            ExchangeFactory._builders = snapshot
+        ExchangeFactory.restore_defaults()
 
 
-def test_default_factory_creates_ccxt_adapter_without_connecting(
+def test_bingx_uses_native_adapter_and_normalizes_legacy_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_bingx(**config: Any) -> FakeExchange:
+        calls.append(dict(config))
+        return FakeExchange(**config)
+
+    monkeypatch.setattr(
+        factory_module,
+        "BingXAdapter",
+        fake_bingx,
+    )
+
+    exchange = ExchangeFactory.create(
+        ExchangeType.BINGX,
+        apiKey="api-key",
+        secret="api-secret",
+        sandbox=True,
+        timeout=7.5,
+    )
+
+    assert isinstance(exchange, FakeExchange)
+    assert calls == [
+        {
+            "api_key": "api-key",
+            "api_secret": "api-secret",
+            "demo_mode": True,
+            "timeout": 7.5,
+        }
+    ]
+
+
+def test_bingx_accepts_canonical_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_bingx(**config: Any) -> FakeExchange:
+        calls.append(dict(config))
+        return FakeExchange(**config)
+
+    monkeypatch.setattr(
+        factory_module,
+        "BingXAdapter",
+        fake_bingx,
+    )
+
+    ExchangeFactory.create(
+        "  BiNgX  ",
+        api_key="key",
+        api_secret="secret",
+        demo_mode=False,
+    )
+
+    assert calls == [
+        {
+            "api_key": "key",
+            "api_secret": "secret",
+            "demo_mode": False,
+        }
+    ]
+
+
+def test_non_bingx_defaults_to_ccxt_without_connecting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, dict[str, Any]]] = []
@@ -117,21 +180,40 @@ def test_default_factory_creates_ccxt_adapter_without_connecting(
     ]
 
 
-def test_factory_accepts_exchange_enum(
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"api_key": "one", "apiKey": "two"},
+        {"api_secret": "one", "secret": "two"},
+        {"demo_mode": True, "sandbox": False},
+        {"demoMode": True, "sandbox": False},
+    ],
+)
+def test_bingx_conflicting_aliases_fail_before_construction(
+    config: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    called = False
+
+    def fake_bingx(**kwargs: Any) -> FakeExchange:
+        nonlocal called
+        called = True
+        return FakeExchange(**kwargs)
+
     monkeypatch.setattr(
         factory_module,
-        "CCXTExchange",
-        lambda exchange_name, **config: FakeExchange(
-            exchange_name=exchange_name,
-            **config,
-        ),
+        "BingXAdapter",
+        fake_bingx,
     )
 
-    exchange = ExchangeFactory.create(ExchangeType.BINGX)
+    with pytest.raises(ExchangeError) as captured:
+        ExchangeFactory.create("bingx", **config)
 
-    assert exchange.config == {"exchange_name": "bingx"}
+    assert called is False
+    assert isinstance(captured.value.__cause__, ValueError)
+    assert captured.value.operation == "create_exchange"
+    assert "one" not in str(captured.value)
+    assert "two" not in str(captured.value)
 
 
 def test_default_registry_is_truthful_and_deterministic() -> None:
@@ -178,6 +260,7 @@ def test_unregistered_exchange_has_clear_error() -> None:
         ExchangeFactory.create("kraken")
 
     assert captured.value.exchange == "kraken"
+    assert captured.value.operation == "create_exchange"
     assert "Unsupported exchange: kraken" in str(captured.value)
     assert "binance" in str(captured.value)
 
@@ -276,6 +359,7 @@ def test_builder_failure_is_wrapped_without_leaking_config() -> None:
         )
 
     assert captured.value.exchange == "broken"
+    assert captured.value.operation == "create_exchange"
     assert "Failed to create exchange adapter: broken" in str(
         captured.value
     )
@@ -312,4 +396,15 @@ def test_unregister_returns_builder_and_removes_exchange() -> None:
         ExchangeFactory.unregister("custom")
 
     assert captured.value.exchange == "custom"
+    assert captured.value.operation == "unregister_exchange"
     assert "not registered: custom" in str(captured.value)
+
+
+def test_restore_defaults_discards_runtime_registry_mutations() -> None:
+    ExchangeFactory.register("custom", FakeExchange)
+    ExchangeFactory.unregister("bingx")
+
+    ExchangeFactory.restore_defaults()
+
+    assert ExchangeFactory.is_registered("custom") is False
+    assert ExchangeFactory.is_registered("bingx") is True

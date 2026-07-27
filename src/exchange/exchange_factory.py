@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any, ClassVar
 
 from src.exchange.base import BaseExchange
+from src.exchange.bingx_adapter import BingXAdapter
 from src.exchange.ccxt_exchange import CCXTExchange
 from src.exchange.exceptions import ExchangeError
 
@@ -17,8 +18,7 @@ ExchangeBuilder = Callable[..., BaseExchange]
 class ExchangeType(str, Enum):
     """Known exchange identifiers.
 
-    ``PAPER`` is reserved until the paper driver implements ``BaseExchange``.
-    It is intentionally not part of the default factory registry.
+    ``PAPER`` remains reserved until its driver implements ``BaseExchange``.
     """
 
     BINGX = "bingx"
@@ -27,6 +27,61 @@ class ExchangeType(str, Enum):
     OKX = "okx"
     KUCOIN = "kucoin"
     PAPER = "paper"
+
+
+def _pop_config_alias(
+    config: dict[str, Any],
+    canonical_name: str,
+    *aliases: str,
+    default: Any = None,
+) -> Any:
+    names = (canonical_name, *aliases)
+    supplied = [name for name in names if name in config]
+
+    if len(supplied) > 1:
+        joined = ", ".join(supplied)
+        raise ValueError(
+            f"Conflicting exchange configuration aliases: {joined}"
+        )
+
+    if not supplied:
+        return default
+
+    return config.pop(supplied[0])
+
+
+def _native_bingx_builder(**config: Any) -> BaseExchange:
+    """Build the hardened native BingX adapter.
+
+    Common CCXT-style credential aliases are accepted so existing application
+    configuration does not silently break when BingX switches to the native
+    adapter.
+    """
+
+    normalized = dict(config)
+    api_key = _pop_config_alias(
+        normalized,
+        "api_key",
+        "apiKey",
+    )
+    api_secret = _pop_config_alias(
+        normalized,
+        "api_secret",
+        "secret",
+    )
+    demo_mode = _pop_config_alias(
+        normalized,
+        "demo_mode",
+        "demoMode",
+        "sandbox",
+    )
+
+    return BingXAdapter(
+        api_key=api_key,
+        api_secret=api_secret,
+        demo_mode=demo_mode,
+        **normalized,
+    )
 
 
 def _ccxt_builder(exchange_name: str) -> ExchangeBuilder:
@@ -39,14 +94,16 @@ def _ccxt_builder(exchange_name: str) -> ExchangeBuilder:
 
 
 _DEFAULT_BUILDERS: dict[str, ExchangeBuilder] = {
-    exchange_type.value: _ccxt_builder(exchange_type.value)
-    for exchange_type in (
-        ExchangeType.BINGX,
-        ExchangeType.BINANCE,
-        ExchangeType.BYBIT,
-        ExchangeType.OKX,
-        ExchangeType.KUCOIN,
-    )
+    ExchangeType.BINGX.value: _native_bingx_builder,
+    **{
+        exchange_type.value: _ccxt_builder(exchange_type.value)
+        for exchange_type in (
+            ExchangeType.BINANCE,
+            ExchangeType.BYBIT,
+            ExchangeType.OKX,
+            ExchangeType.KUCOIN,
+        )
+    },
 }
 
 
@@ -79,6 +136,7 @@ class ExchangeFactory:
                     f"Registered exchanges: {supported}"
                 ),
                 exchange=exchange_name,
+                operation="create_exchange",
             )
 
         try:
@@ -88,10 +146,11 @@ class ExchangeFactory:
         except Exception as exc:
             raise ExchangeError(
                 message=(
-                    f"Failed to create exchange adapter: "
+                    "Failed to create exchange adapter: "
                     f"{exchange_name}"
                 ),
                 exchange=exchange_name,
+                operation="create_exchange",
             ) from exc
 
         if not isinstance(exchange, BaseExchange):
@@ -120,7 +179,7 @@ class ExchangeFactory:
         with cls._registry_lock:
             if exchange_name in cls._builders and not replace:
                 raise ValueError(
-                    f"Exchange builder is already registered: "
+                    "Exchange builder is already registered: "
                     f"{exchange_name}"
                 )
 
@@ -141,10 +200,11 @@ class ExchangeFactory:
             except KeyError as exc:
                 raise ExchangeError(
                     message=(
-                        f"Exchange builder is not registered: "
+                        "Exchange builder is not registered: "
                         f"{exchange_name}"
                     ),
                     exchange=exchange_name,
+                    operation="unregister_exchange",
                 ) from exc
 
     @classmethod
@@ -165,6 +225,17 @@ class ExchangeFactory:
 
         with cls._registry_lock:
             return sorted(cls._builders)
+
+    @classmethod
+    def restore_defaults(cls) -> None:
+        """Restore the curated production registry.
+
+        This is useful for deterministic test isolation and controlled runtime
+        reconfiguration.
+        """
+
+        with cls._registry_lock:
+            cls._builders = dict(_DEFAULT_BUILDERS)
 
     @staticmethod
     def _normalize_exchange_name(
