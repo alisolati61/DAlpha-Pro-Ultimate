@@ -1,127 +1,183 @@
+"""Concurrency-safe rate limiting for exchange I/O."""
+
 from __future__ import annotations
 
 import asyncio
+import math
 import time
+from collections.abc import Awaitable, Callable
+from threading import Lock
+
+Clock = Callable[[], float]
+AsyncSleeper = Callable[[float], Awaitable[None]]
+SyncSleeper = Callable[[float], None]
 
 
 class RateLimiter:
-    """
-    Async rate limiter.
+    """Enforce a minimum interval between weighted request permits.
 
-    requests_per_second=2
-    یعنی حداقل 0.5 ثانیه فاصله بین درخواست‌ها.
+    The limiter uses a monotonic virtual schedule. Permit reservations are
+    atomic across asynchronous and synchronous callers, so concurrent callers
+    cannot bypass the configured rate.
+
+    A cancelled asynchronous caller keeps its reserved slot. This conservative
+    behavior may delay later callers, but it prevents accidental exchange-rate
+    limit violations during cancellation storms.
     """
 
     def __init__(
         self,
         requests_per_second: float = 1.0,
+        *,
+        clock: Clock = time.monotonic,
+        async_sleep: AsyncSleeper = asyncio.sleep,
+        sync_sleep: SyncSleeper = time.sleep,
     ) -> None:
-
-        if isinstance(
+        self.requests_per_second = self._validate_positive_number(
             requests_per_second,
-            bool,
-        ):
-
-            raise TypeError(
-                "requests_per_second must be numeric."
-            )
-
-        if not isinstance(
-            requests_per_second,
-            (int, float),
-        ):
-
-            raise TypeError(
-                "requests_per_second must be numeric."
-            )
-
-        if requests_per_second <= 0:
-
-            raise ValueError(
-                "requests_per_second must be greater than zero."
-            )
-
-        self.requests_per_second = float(
-            requests_per_second,
+            field_name="requests_per_second",
         )
+        self.interval = 1.0 / self.requests_per_second
 
-        self.interval = (
-            1.0
-            / self.requests_per_second
-        )
+        if not callable(clock):
+            raise TypeError("clock must be callable.")
+        if not callable(async_sleep):
+            raise TypeError("async_sleep must be callable.")
+        if not callable(sync_sleep):
+            raise TypeError("sync_sleep must be callable.")
 
+        self._clock = clock
+        self._async_sleep = async_sleep
+        self._sync_sleep = sync_sleep
+
+        self._state_lock = Lock()
+        self._next_available_at: float | None = None
         self._last_request_at: float | None = None
 
-        self._lock = asyncio.Lock()
+    async def acquire(self, weight: float = 1.0) -> None:
+        """Acquire one weighted asynchronous request permit."""
 
-    # ==================================================
-    # ASYNC API
-    # ==================================================
+        delay = self._reserve(weight)
 
-    async def acquire(
-        self,
-    ) -> None:
+        if delay > 0:
+            await self._async_sleep(delay)
 
-        async with self._lock:
+        self._mark_acquired()
 
-            now = time.monotonic()
+    def wait(self, weight: float = 1.0) -> None:
+        """Acquire one weighted synchronous request permit.
 
-            if (
-                self._last_request_at
-                is not None
-            ):
+        This compatibility API shares the same schedule as :meth:`acquire`.
+        It must not be called from an event-loop thread because it blocks.
+        """
 
-                elapsed = (
-                    now
-                    - self._last_request_at
-                )
+        delay = self._reserve(weight)
 
-                remaining = (
-                    self.interval
-                    - elapsed
-                )
+        if delay > 0:
+            self._sync_sleep(delay)
 
-                if remaining > 0:
+        self._mark_acquired()
 
-                    await asyncio.sleep(
-                        remaining,
-                    )
+    @property
+    def last_request_at(self) -> float | None:
+        """Return the monotonic time of the latest completed permit."""
 
-            self._last_request_at = (
-                time.monotonic()
-            )
+        with self._state_lock:
+            return self._last_request_at
 
-    # ==================================================
-    # SYNC COMPATIBILITY API
-    # ==================================================
+    @property
+    def retry_after(self) -> float:
+        """Return the current delay before an immediate request permit."""
 
-    def wait(
-        self,
-    ) -> None:
+        now = self._read_clock()
 
-        now = time.monotonic()
+        with self._state_lock:
+            if self._next_available_at is None:
+                return 0.0
 
-        if (
-            self._last_request_at
-            is not None
-        ):
+            return max(0.0, self._next_available_at - now)
 
-            elapsed = (
-                now
-                - self._last_request_at
-            )
+    def reset(self) -> None:
+        """Clear all scheduling state.
 
-            remaining = (
-                self.interval
-                - elapsed
-            )
+        Reset should only be used when the remote exchange limit window is
+        known to have reset, or in deterministic tests.
+        """
 
-            if remaining > 0:
+        with self._state_lock:
+            self._next_available_at = None
+            self._last_request_at = None
 
-                time.sleep(
-                    remaining,
-                )
-
-        self._last_request_at = (
-            time.monotonic()
+    def _reserve(self, weight: float) -> float:
+        normalized_weight = self._validate_positive_number(
+            weight,
+            field_name="weight",
         )
+        now = self._read_clock()
+
+        with self._state_lock:
+            scheduled_at = (
+                now
+                if self._next_available_at is None
+                else max(now, self._next_available_at)
+            )
+            delay = max(0.0, scheduled_at - now)
+            self._next_available_at = (
+                scheduled_at
+                + self.interval * normalized_weight
+            )
+
+        return delay
+
+    def _mark_acquired(self) -> None:
+        acquired_at = self._read_clock()
+
+        with self._state_lock:
+            self._last_request_at = acquired_at
+
+    def _read_clock(self) -> float:
+        value = self._clock()
+
+        if isinstance(value, bool) or not isinstance(
+            value,
+            (int, float),
+        ):
+            raise TypeError(
+                "clock must return a finite numeric value."
+            )
+
+        normalized = float(value)
+
+        if not math.isfinite(normalized):
+            raise ValueError(
+                "clock must return a finite numeric value."
+            )
+
+        return normalized
+
+    @staticmethod
+    def _validate_positive_number(
+        value: float,
+        *,
+        field_name: str,
+    ) -> float:
+        if isinstance(value, bool) or not isinstance(
+            value,
+            (int, float),
+        ):
+            raise TypeError(f"{field_name} must be numeric.")
+
+        normalized = float(value)
+
+        if not math.isfinite(normalized):
+            raise ValueError(f"{field_name} must be finite.")
+
+        if normalized <= 0:
+            raise ValueError(
+                f"{field_name} must be greater than zero."
+            )
+
+        return normalized
+
+
+__all__ = ("RateLimiter",)
