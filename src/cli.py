@@ -5,15 +5,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from importlib import metadata
+from pathlib import Path
 from typing import Sequence
 
-from src.core.kernel.bootstrap import build_runtime
+from src.core.diagnostics.doctor import DoctorRunner
+from src.core.diagnostics.models import (
+    DiagnosticReport,
+    DiagnosticStatus,
+)
 from src.core.kernel.runtime import RuntimeMode
-from src.core.kernel.state import KernelState
 
-_DISTRIBUTION_NAME = "alpha-pro-x-infinity"
-_MINIMUM_PYTHON = (3, 12)
+_TEXT_FORMAT = "text"
+_JSON_FORMAT = "json"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -22,69 +25,74 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Alpha Pro X Infinity local diagnostics.",
     )
     subcommands = parser.add_subparsers(dest="command")
-    subcommands.add_parser(
+    doctor_parser = subcommands.add_parser(
         RuntimeMode.DOCTOR.value,
         help="Run safe local diagnostics (default).",
+    )
+    doctor_parser.add_argument(
+        "--format",
+        choices=(_TEXT_FORMAT, _JSON_FORMAT),
+        default=_TEXT_FORMAT,
+        dest="output_format",
+    )
+    doctor_parser.add_argument(
+        "--output",
+        type=Path,
+    )
+    doctor_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing output file.",
     )
     return parser
 
 
-async def _doctor() -> int:
-    checks: list[tuple[str, bool]] = []
-    checks.append(
-        (
-            "python",
-            sys.version_info >= _MINIMUM_PYTHON,
+def _format_text(report: DiagnosticReport) -> str:
+    lines = [f"{report.application} doctor"]
+
+    for check in report.checks:
+        status = (
+            "OK"
+            if check.status is DiagnosticStatus.PASS
+            else "FAIL"
         )
+        lines.append(f"[{status}] {check.name}")
+
+    lines.append(
+        "Doctor: OK"
+        if report.success
+        else "Doctor: FAILED"
     )
+    return "\n".join(lines)
 
-    try:
-        package_version = metadata.version(_DISTRIBUTION_NAME)
-    except metadata.PackageNotFoundError:
-        package_version = ""
 
-    checks.append(("package metadata", bool(package_version)))
+def _format_report(
+    report: DiagnosticReport,
+    output_format: str,
+) -> str:
+    if output_format == _JSON_FORMAT:
+        return report.to_json()
 
-    runtime = build_runtime()
-    checks.extend(
-        (
-            ("kernel construction", runtime.kernel is not None),
-            ("runtime construction", runtime.mode is RuntimeMode.DOCTOR),
-            (
-                "exchange wiring absent",
-                not hasattr(runtime, "exchange"),
-            ),
-            (
-                "execution wiring absent",
-                not hasattr(runtime, "execution"),
-            ),
-        )
-    )
+    if output_format == _TEXT_FORMAT:
+        return _format_text(report)
 
-    await runtime.startup()
-    checks.append(
-        (
-            "local startup",
-            runtime.kernel.state is KernelState.RUNNING,
-        )
-    )
-    await runtime.shutdown()
-    checks.append(
-        (
-            "local shutdown",
-            runtime.kernel.state is KernelState.SHUTDOWN,
-        )
-    )
+    raise ValueError("Unsupported diagnostic output format.")
 
-    print("Alpha Pro X Infinity doctor")
 
-    for name, passed in checks:
-        status = "OK" if passed else "FAIL"
-        print(f"[{status}] {name}")
+def _write_output(
+    output: Path,
+    payload: str,
+    *,
+    force: bool,
+) -> None:
+    mode = "w" if force else "x"
 
-    succeeded = all(passed for _, passed in checks)
-    print("Doctor: OK" if succeeded else "Doctor: FAILED")
-    return 0 if succeeded else 1
+    with output.open(
+        mode,
+        encoding="utf-8",
+        newline="\n",
+    ) as stream:
+        stream.write(payload)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -94,18 +102,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     command = arguments.command or RuntimeMode.DOCTOR.value
 
+    if command == RuntimeMode.DOCTOR.value and arguments.command is None:
+        arguments.output_format = _TEXT_FORMAT
+        arguments.output = None
+        arguments.force = False
+
     if command != RuntimeMode.DOCTOR.value:
         parser.error(f"unsupported command: {command}")
 
+    if arguments.force and arguments.output is None:
+        parser.error("--force requires --output")
+
     try:
-        return asyncio.run(_doctor())
-    except Exception as error:
+        report = asyncio.run(DoctorRunner().run())
+        payload = _format_report(
+            report,
+            arguments.output_format,
+        )
+
+        if arguments.output is None:
+            print(payload)
+        else:
+            _write_output(
+                arguments.output,
+                payload,
+                force=arguments.force,
+            )
+    except (OSError, TypeError, ValueError):
         print(
-            "Doctor failed: internal check error "
-            f"({type(error).__name__}).",
+            "Doctor failed: report output unavailable.",
             file=sys.stderr,
         )
         return 1
+    except Exception:
+        print(
+            "Doctor failed: internal diagnostic error.",
+            file=sys.stderr,
+        )
+        return 1
+
+    return 0 if report.success else 1
 
 
 if __name__ == "__main__":
