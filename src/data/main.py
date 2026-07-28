@@ -1,6 +1,6 @@
 import asyncio
 
-from market_data_feed import MarketDataFeed
+from .market_data_feed import MarketDataFeed
 
 
 async def main():
