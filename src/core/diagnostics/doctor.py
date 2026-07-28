@@ -11,6 +11,8 @@ from importlib import metadata
 from time import monotonic
 from typing import Any, TypeAlias
 
+from src.core.config.loader import load_runtime_config
+from src.core.config.models import RuntimeConfig
 from src.core.diagnostics.models import (
     DiagnosticCheck,
     DiagnosticReport,
@@ -22,14 +24,13 @@ from src.core.kernel.kernel import Kernel
 from src.core.kernel.runtime import ApplicationRuntime, RuntimeMode
 from src.core.kernel.state import KernelState
 
-_APPLICATION_NAME = "Alpha Pro X Infinity"
 _DISTRIBUTION_NAME = "alpha-pro-x-infinity"
 _MINIMUM_PYTHON = (3, 12)
 _UNKNOWN_VERSION = "unknown"
 
 Clock: TypeAlias = Callable[[], datetime]
 Timer: TypeAlias = Callable[[], float]
-RuntimeFactory: TypeAlias = Callable[[], ApplicationRuntime]
+RuntimeFactory: TypeAlias = Callable[[RuntimeConfig], ApplicationRuntime]
 CheckAction: TypeAlias = Callable[
     [],
     bool | Awaitable[bool],
@@ -47,6 +48,7 @@ class DoctorRunner:
         self,
         *,
         runtime_factory: RuntimeFactory = build_runtime,
+        config: RuntimeConfig | None = None,
         clock: Clock = _utc_now,
         timer: Timer = monotonic,
         python_version: tuple[int, ...] | None = None,
@@ -62,6 +64,13 @@ class DoctorRunner:
                 raise TypeError(f"{name} must be callable.")
 
         self._runtime_factory = runtime_factory
+        self._config = (
+            load_runtime_config()
+            if config is None
+            else config
+        )
+        if not isinstance(self._config, RuntimeConfig):
+            raise TypeError("config must be a RuntimeConfig.")
         self._clock = clock
         self._timer = timer
         self._python_version = (
@@ -120,13 +129,16 @@ class DoctorRunner:
 
         def construct_runtime() -> bool:
             nonlocal runtime
-            candidate = self._runtime_factory()
+            candidate = self._runtime_factory(self._config)
 
             if not isinstance(candidate, ApplicationRuntime):
                 return False
 
             runtime = candidate
-            return runtime.mode is RuntimeMode.DOCTOR
+            return (
+                runtime.mode is RuntimeMode.DOCTOR
+                and runtime.config is self._config
+            )
 
         check, _ = await self._run_check(
             "runtime construction",
@@ -196,7 +208,7 @@ class DoctorRunner:
         frozen_checks = tuple(checks)
 
         return DiagnosticReport(
-            application=_APPLICATION_NAME,
+            application=self._config.application_name,
             version=package_version or _UNKNOWN_VERSION,
             mode=RuntimeMode.DOCTOR.value,
             success=all(

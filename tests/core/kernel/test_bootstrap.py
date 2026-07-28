@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from src.core.config.loader import load_runtime_config
 from src.core.kernel.bootstrap import build_runtime
 from src.core.kernel.runtime import RuntimeMode
 from src.core.kernel.state import KernelState
@@ -20,6 +21,16 @@ def test_build_runtime_defaults_to_doctor() -> None:
     assert runtime.mode is RuntimeMode.DOCTOR
     assert runtime.kernel.state is KernelState.CREATED
     assert runtime.started is False
+
+
+def test_build_runtime_retains_supplied_config() -> None:
+    config = load_runtime_config(
+        overrides={"environment": "test"}
+    )
+
+    runtime = build_runtime(config)
+
+    assert runtime.config is config
 
 
 @pytest.mark.asyncio

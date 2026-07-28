@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from src.core.config.errors import ConfigurationError
+from src.core.config.loader import load_runtime_config
 from src.core.diagnostics.doctor import DoctorRunner
 from src.core.diagnostics.models import (
     DiagnosticReport,
@@ -28,6 +30,15 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_parser = subcommands.add_parser(
         RuntimeMode.DOCTOR.value,
         help="Run safe local diagnostics (default).",
+    )
+    doctor_parser.add_argument(
+        "--config",
+        type=Path,
+        help="Load an explicit TOML runtime configuration.",
+    )
+    doctor_parser.add_argument(
+        "--environment",
+        help="Override the configured Doctor environment.",
     )
     doctor_parser.add_argument(
         "--format",
@@ -106,6 +117,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments.output_format = _TEXT_FORMAT
         arguments.output = None
         arguments.force = False
+        arguments.config = None
+        arguments.environment = None
 
     if command != RuntimeMode.DOCTOR.value:
         parser.error(f"unsupported command: {command}")
@@ -114,7 +127,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--force requires --output")
 
     try:
-        report = asyncio.run(DoctorRunner().run())
+        overrides = (
+            {"environment": arguments.environment}
+            if arguments.environment is not None
+            else None
+        )
+        config = load_runtime_config(
+            config_path=arguments.config,
+            overrides=overrides,
+        )
+        report = asyncio.run(
+            DoctorRunner(config=config).run()
+        )
         payload = _format_report(
             report,
             arguments.output_format,
@@ -128,6 +152,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 payload,
                 force=arguments.force,
             )
+    except ConfigurationError as error:
+        print(str(error), file=sys.stderr)
+        return 1
     except (OSError, TypeError, ValueError):
         print(
             "Doctor failed: report output unavailable.",

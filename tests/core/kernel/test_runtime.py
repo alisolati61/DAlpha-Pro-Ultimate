@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.core.config.loader import load_runtime_config
 from src.core.context.context_builder import ContextBuilder
 from src.core.event_bus.event_bus import EventBus
 from src.core.kernel.kernel import Kernel
@@ -54,6 +55,24 @@ def make_runtime(
         lifecycle_manager=LifecycleManager(),
         services=services,
     )
+
+
+def test_runtime_retains_exact_validated_config() -> None:
+    config = load_runtime_config(
+        overrides={"environment": "test"}
+    )
+    runtime = ApplicationRuntime(
+        mode=RuntimeMode.DOCTOR,
+        config=config,
+        kernel=Kernel(),
+        context=ContextBuilder.build(),
+        event_bus=EventBus(),
+        lifecycle_manager=LifecycleManager(),
+    )
+
+    assert runtime.config is config
+    assert not hasattr(runtime, "exchange")
+    assert not hasattr(runtime, "execution")
 
 
 @pytest.mark.asyncio

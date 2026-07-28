@@ -13,6 +13,8 @@ import pytest
 import websockets
 
 import src.cli as cli
+from src.core.config.errors import ConfigurationValueError
+from src.core.config.models import RuntimeConfig
 from src.core.diagnostics.models import (
     DiagnosticCheck,
     DiagnosticReport,
@@ -57,6 +59,13 @@ def _stub_runner(
     report: DiagnosticReport,
 ) -> None:
     class StubRunner:
+        def __init__(
+            self,
+            *,
+            config: RuntimeConfig,
+        ) -> None:
+            self.config = config
+
         async def run(self) -> DiagnosticReport:
             return report
 
@@ -81,6 +90,82 @@ def test_explicit_doctor_command_succeeds(
 
     assert cli.main(["doctor"]) == 0
     assert "Doctor: OK" in capsys.readouterr().out
+
+
+def test_cli_loads_config_and_environment_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    received: list[RuntimeConfig] = []
+
+    class StubRunner:
+        def __init__(self, *, config: RuntimeConfig) -> None:
+            received.append(config)
+
+        async def run(self) -> DiagnosticReport:
+            return _report()
+
+    config_file = tmp_path / "runtime.toml"
+    config_file.write_text(
+        "[runtime]\nenvironment = 'test'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "DoctorRunner", StubRunner)
+
+    assert cli.main(
+        [
+            "doctor",
+            "--config",
+            str(config_file),
+            "--environment",
+            "staging",
+        ]
+    ) == 0
+    assert received[0].environment == "staging"
+    assert "Doctor: OK" in capsys.readouterr().out
+
+
+def test_invalid_config_prevents_runtime_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    constructed = False
+
+    class ForbiddenRunner:
+        def __init__(self, **kwargs: object) -> None:
+            nonlocal constructed
+            constructed = True
+
+    monkeypatch.setattr(cli, "DoctorRunner", ForbiddenRunner)
+
+    assert cli.main(
+        ["doctor", "--environment", "live"]
+    ) == 1
+    captured = capsys.readouterr()
+
+    assert constructed is False
+    assert "configuration" in captured.err.casefold()
+    assert "traceback" not in captured.err.casefold()
+
+
+def test_config_failure_does_not_expose_raw_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail(**kwargs: object) -> RuntimeConfig:
+        raise ConfigurationValueError from RuntimeError(
+            "api_key=hidden C:\\private\\config.toml"
+        )
+
+    monkeypatch.setattr(cli, "load_runtime_config", fail)
+
+    assert cli.main(["doctor"]) == 1
+    captured = capsys.readouterr()
+    public = captured.err.casefold()
+    assert "hidden" not in public
+    assert "c:\\private" not in public
+    assert "traceback" not in public
 
 
 def test_unknown_cli_command_fails() -> None:

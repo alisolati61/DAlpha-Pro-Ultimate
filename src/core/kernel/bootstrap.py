@@ -2,23 +2,31 @@
 
 from __future__ import annotations
 
+from src.core.config.loader import load_runtime_config
+from src.core.config.models import RuntimeConfig
 from src.core.context.context_builder import ContextBuilder
 from src.core.event_bus.event_bus import EventBus
 from src.core.kernel.kernel import Kernel
-from src.core.kernel.runtime import ApplicationRuntime, RuntimeMode
+from src.core.kernel.runtime import ApplicationRuntime
 from src.core.lifecycle.lifecycle import LifecycleManager
 
 
 def build_runtime(
-    mode: RuntimeMode = RuntimeMode.DOCTOR,
+    config: RuntimeConfig | None = None,
 ) -> ApplicationRuntime:
     """Build an unstarted, local-only runtime without external side effects."""
 
-    if not isinstance(mode, RuntimeMode):
-        raise TypeError("mode must be a RuntimeMode.")
+    normalized_config = (
+        load_runtime_config()
+        if config is None
+        else config
+    )
+    if not isinstance(normalized_config, RuntimeConfig):
+        raise TypeError("config must be a RuntimeConfig.")
 
     return ApplicationRuntime(
-        mode=mode,
+        mode=normalized_config.runtime_mode,
+        config=normalized_config,
         kernel=Kernel(),
         context=ContextBuilder.build(),
         event_bus=EventBus(),

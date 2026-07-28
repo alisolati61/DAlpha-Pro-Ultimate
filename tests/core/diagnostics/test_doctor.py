@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from src.core.config.loader import load_runtime_config
+from src.core.config.models import RuntimeConfig
 from src.core.context.context_builder import ContextBuilder
 from src.core.diagnostics.doctor import DoctorRunner
 from src.core.diagnostics.models import DiagnosticStatus
@@ -70,9 +72,10 @@ class FailingStartupService(Service):
 
 
 class ShutdownTrackingRuntime(ApplicationRuntime):
-    def __init__(self) -> None:
+    def __init__(self, config: RuntimeConfig) -> None:
         super().__init__(
             mode=RuntimeMode.DOCTOR,
+            config=config,
             kernel=Kernel(),
             context=ContextBuilder.build(),
             event_bus=EventBus(),
@@ -147,10 +150,12 @@ async def test_unsafe_metadata_version_is_not_exposed() -> None:
 
 @pytest.mark.asyncio
 async def test_shutdown_is_attempted_after_startup_failure() -> None:
-    runtime = ShutdownTrackingRuntime()
+    config = load_runtime_config()
+    runtime = ShutdownTrackingRuntime(config)
 
     report = await DoctorRunner(
-        runtime_factory=lambda: runtime,
+        config=config,
+        runtime_factory=lambda supplied: runtime,
         version_reader=lambda name: "0.1.0",
     ).run()
     checks = {
@@ -162,6 +167,34 @@ async def test_shutdown_is_attempted_after_startup_failure() -> None:
     assert checks["local shutdown"].status is DiagnosticStatus.PASS
     assert runtime.shutdown_calls == 1
     assert report.success is False
+
+
+@pytest.mark.asyncio
+async def test_doctor_passes_exact_config_to_runtime() -> None:
+    config = load_runtime_config(
+        overrides={"environment": "test"}
+    )
+    received: list[RuntimeConfig] = []
+
+    def factory(supplied: RuntimeConfig) -> ApplicationRuntime:
+        received.append(supplied)
+        return ApplicationRuntime(
+            mode=supplied.runtime_mode,
+            config=supplied,
+            kernel=Kernel(),
+            context=ContextBuilder.build(),
+            event_bus=EventBus(),
+            lifecycle_manager=LifecycleManager(),
+        )
+
+    report = await DoctorRunner(
+        config=config,
+        runtime_factory=factory,
+        version_reader=lambda name: "0.1.0",
+    ).run()
+
+    assert report.success is True
+    assert received == [config]
 
 
 @pytest.mark.asyncio

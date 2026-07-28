@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from src.core.context.app_context import AppContext
 from src.core.event_bus.event_bus import EventBus
@@ -11,6 +11,9 @@ from src.core.kernel.kernel import Kernel
 from src.core.kernel.state import KernelState
 from src.core.lifecycle.lifecycle import LifecycleManager
 from src.core.lifecycle.service import Service
+
+if TYPE_CHECKING:
+    from src.core.config.models import RuntimeConfig
 
 
 class RuntimeMode(str, Enum):
@@ -30,10 +33,24 @@ class ApplicationRuntime:
         context: AppContext,
         event_bus: EventBus,
         lifecycle_manager: LifecycleManager,
+        config: RuntimeConfig | None = None,
         services: Iterable[Service] = (),
     ) -> None:
+        from src.core.config.loader import load_runtime_config
+        from src.core.config.models import RuntimeConfig
+
         if not isinstance(mode, RuntimeMode):
             raise TypeError("mode must be a RuntimeMode.")
+
+        normalized_config = (
+            load_runtime_config()
+            if config is None
+            else config
+        )
+        if not isinstance(normalized_config, RuntimeConfig):
+            raise TypeError("config must be a RuntimeConfig.")
+        if normalized_config.runtime_mode is not mode:
+            raise ValueError("config runtime mode must match mode.")
 
         if not isinstance(kernel, Kernel):
             raise TypeError("kernel must be a Kernel.")
@@ -58,6 +75,7 @@ class ApplicationRuntime:
             raise TypeError("services must implement the Service contract.")
 
         self.mode = mode
+        self.config = normalized_config
         self.kernel = kernel
         self.context = context
         self.event_bus = event_bus
