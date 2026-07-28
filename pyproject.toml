@@ -19,6 +19,9 @@ dependencies = [
     "websockets>=12,<16",
 ]
 
+[project.scripts]
+alpha-pro-x = "src.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<10",

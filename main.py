@@ -1,15 +1,6 @@
-from src.logger import app_logger
-from src.config.settings import settings
+"""Compatibility wrapper for the safe Alpha Pro X CLI."""
 
-
-def main():
-    print("=" * 50)
-    print(settings.APP_NAME)
-    print(settings.VERSION)
-    print(settings.ENVIRONMENT)
-    print("=" * 50)
-
+from src.cli import main
 
 if __name__ == "__main__":
-    main()
-    app_logger.info("Alpha Pro UltimateX Started Successfully")
+    raise SystemExit(main())
