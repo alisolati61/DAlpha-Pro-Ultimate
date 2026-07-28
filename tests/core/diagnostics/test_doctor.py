@@ -16,6 +16,7 @@ from src.core.kernel.kernel import Kernel
 from src.core.kernel.runtime import ApplicationRuntime, RuntimeMode
 from src.core.lifecycle.lifecycle import LifecycleManager
 from src.core.lifecycle.service import Service
+from src.core.services.models import ServiceDefinition
 
 EXPECTED_CHECKS = (
     "python",
@@ -80,7 +81,12 @@ class ShutdownTrackingRuntime(ApplicationRuntime):
             context=ContextBuilder.build(),
             event_bus=EventBus(),
             lifecycle_manager=LifecycleManager(),
-            services=(FailingStartupService(),),
+            service_definitions=(
+                ServiceDefinition(
+                    "failing-startup",
+                    FailingStartupService(),
+                ),
+            ),
         )
         self.shutdown_calls = 0
 

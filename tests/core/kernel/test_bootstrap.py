@@ -13,6 +13,19 @@ from src.core.config.loader import load_runtime_config
 from src.core.kernel.bootstrap import build_runtime
 from src.core.kernel.runtime import RuntimeMode
 from src.core.kernel.state import KernelState
+from src.core.lifecycle.service import Service
+from src.core.services.models import ServiceDefinition
+
+
+class NoOpService(Service):
+    def initialize(self) -> None:
+        return None
+
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
 
 
 def test_build_runtime_defaults_to_doctor() -> None:
@@ -31,6 +44,17 @@ def test_build_runtime_retains_supplied_config() -> None:
     runtime = build_runtime(config)
 
     assert runtime.config is config
+
+
+def test_build_runtime_preserves_explicit_service_definitions() -> None:
+    definition = ServiceDefinition("local", NoOpService())
+
+    runtime = build_runtime(
+        service_definitions=(definition,)
+    )
+
+    assert runtime.service_definitions == (definition,)
+    assert runtime.lifecycle_manager.definitions == (definition,)
 
 
 @pytest.mark.asyncio
