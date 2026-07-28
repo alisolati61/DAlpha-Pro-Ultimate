@@ -409,3 +409,17 @@ def test_concurrent_updates_do_not_lose_volume() -> None:
         worker_count * updates_per_worker
     )
     assert builder.size == 1
+
+
+def test_private_transaction_restore_preserves_candle_identity() -> None:
+    builder = CandleBuilder()
+    original = builder.update("BTCUSDT", "1m", 100, 1)
+    state = builder._snapshot_state()
+    builder.update("BTCUSDT", "1m", 200, 2)
+
+    builder._restore_state(state)
+
+    restored = builder.latest("BTCUSDT", "1m")
+    assert restored is original
+    assert restored.close == 100
+    assert restored.volume == 1

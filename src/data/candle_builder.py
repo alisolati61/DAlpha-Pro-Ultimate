@@ -8,6 +8,17 @@ from datetime import UTC, datetime
 from threading import RLock
 from typing import Any
 
+_CandleValues = tuple[
+    str,
+    str,
+    float,
+    float,
+    float,
+    float,
+    float,
+    datetime,
+]
+
 
 def _required_text(value: Any, *, field_name: str) -> str:
     if not isinstance(value, str):
@@ -245,6 +256,50 @@ class CandleBuilder:
 
         with self._lock:
             return len(self._current)
+
+    def _snapshot_state(
+        self,
+    ) -> dict[tuple[str, str], tuple[Candle, _CandleValues]]:
+        with self._lock:
+            return {
+                key: (
+                    candle,
+                    (
+                        candle.symbol,
+                        candle.timeframe,
+                        candle.open,
+                        candle.high,
+                        candle.low,
+                        candle.close,
+                        candle.volume,
+                        candle.start_time,
+                    ),
+                )
+                for key, candle in self._current.items()
+            }
+
+    def _restore_state(
+        self,
+        state: dict[
+            tuple[str, str],
+            tuple[Candle, _CandleValues],
+        ],
+    ) -> None:
+        with self._lock:
+            restored: dict[tuple[str, str], Candle] = {}
+            for key, (candle, values) in state.items():
+                (
+                    candle.symbol,
+                    candle.timeframe,
+                    candle.open,
+                    candle.high,
+                    candle.low,
+                    candle.close,
+                    candle.volume,
+                    candle.start_time,
+                ) = values
+                restored[key] = candle
+            self._current = restored
 
 
 __all__ = (

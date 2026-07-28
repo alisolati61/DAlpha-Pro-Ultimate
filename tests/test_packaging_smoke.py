@@ -7,6 +7,8 @@ def test_data_main_uses_a_package_import() -> None:
     module = import_module("src.data.main")
 
     assert module.MarketDataFeed.__module__ == "src.data.market_data_feed"
+    service = module.create_market_data_service()
+    assert service.__class__.__module__ == "src.data.service"
 
 
 def test_pydantic_settings_is_importable() -> None:

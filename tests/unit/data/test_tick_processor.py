@@ -335,3 +335,15 @@ def test_clear_after_processing_resets_all_state() -> None:
 
     for index in range(10):
         assert processor.latest(f"SYMBOL-{index}") is None
+
+
+def test_private_transaction_restore_preserves_previous_identity() -> None:
+    processor = TickProcessor()
+    original = processor.process("BTCUSDT", 100, 1)
+    state = processor._snapshot_state()
+    processor.process("BTCUSDT", 200, 2)
+
+    processor._restore_state(state)
+
+    assert processor.latest("BTCUSDT") is original
+    assert processor.processed_ticks == 1

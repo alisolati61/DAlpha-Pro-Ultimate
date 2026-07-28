@@ -153,6 +153,18 @@ class TickProcessor:
             self._latest.clear()
             self._count = 0
 
+    def _snapshot_state(self) -> tuple[dict[str, Tick], int]:
+        with self._lock:
+            return (dict(self._latest), self._count)
+
+    def _restore_state(
+        self,
+        state: tuple[dict[str, Tick], int],
+    ) -> None:
+        with self._lock:
+            self._latest = dict(state[0])
+            self._count = state[1]
+
 
 __all__ = (
     "Tick",
