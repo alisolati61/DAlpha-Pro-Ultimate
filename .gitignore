@@ -11,14 +11,21 @@ env/
 
 # Pytest
 .pytest_cache/
+.pytest-tmp/
+.hypothesis/
 
 # Coverage
 .coverage
+.coverage.*
 htmlcov/
+coverage.xml
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
@@ -26,15 +33,30 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
 
 # Environment
 .env
 .env.*
+!.env.example
+
+# Credentials and private keys
+credentials*.json
+secrets*.json
+/credentials/
+/.credentials/
+/secrets/
+*.secret
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Build
 build/
 dist/
 *.egg-info/
+*.whl
 
 # Mypy
 .mypy_cache/
@@ -45,6 +67,9 @@ dist/
 # Temporary
 *.tmp
 *.bak
-logs/
-*.log
-.pytest-tmp/
+/readiness-output*.json
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
