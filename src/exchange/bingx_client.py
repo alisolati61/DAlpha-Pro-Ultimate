@@ -12,14 +12,17 @@ import hmac
 import json
 import math
 import os
+import socket
+import ssl
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from types import TracebackType
 from typing import Any, Self
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -48,6 +51,11 @@ from src.exchange.ratelimiter import RateLimiter
 ClockMilliseconds = Callable[[], int]
 AsyncSleeper = Callable[[float], Awaitable[None]]
 
+_DEFAULT_REQUEST_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "DAlpha-Pro-Ultimate/1.0",
+}
+_PROTECTED_REQUEST_HEADERS = frozenset({"authorization", "x-bx-apikey"})
 _LIVE_BASE_URLS = (
     "https://open-api.bingx.com",
     "https://open-api.bingx.pro",
@@ -81,6 +89,63 @@ _ORDER_CODES = {
     110206,
     110400,
 }
+_DNS_ERRNOS = frozenset({-3, -2, 8, 11001})
+_CONNECTION_REFUSED_ERRNOS = frozenset({61, 111, 10061})
+_CONNECTION_RESET_ERRNOS = frozenset({54, 104, 10054})
+_CONNECT_TIMEOUT_ERRNOS = frozenset({60, 110, 10060})
+
+
+@dataclass(frozen=True, slots=True)
+class BingXTransportDiagnostic:
+    """Sanitized details for one public transport outcome."""
+
+    attempted_host: str
+    transport_stage: str
+    exception_type: str | None
+    sanitized_errno: int | None
+    reason_code: str
+    server_time_ms: int | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+class BingXTransportError(NetworkError):
+    """Network failure with safe machine-readable transport diagnostics."""
+
+    def __init__(
+        self,
+        *,
+        diagnostic: BingXTransportDiagnostic,
+        operation: str,
+    ) -> None:
+        super().__init__(
+            message="BingX transport request failed.",
+            exchange="bingx",
+            operation=operation,
+        )
+        self.attempted_host = diagnostic.attempted_host
+        self.transport_stage = diagnostic.transport_stage
+        self.exception_type = diagnostic.exception_type
+        self.sanitized_errno = diagnostic.sanitized_errno
+        self.reason_code = diagnostic.reason_code
+
+    def to_dict(
+        self,
+        *,
+        include_raw_response: bool = False,
+    ) -> dict[str, object]:
+        payload = super().to_dict(include_raw_response=include_raw_response)
+        payload.update(
+            {
+                "attempted_host": self.attempted_host,
+                "transport_stage": self.transport_stage,
+                "exception_type": self.exception_type,
+                "sanitized_errno": self.sanitized_errno,
+                "reason_code": self.reason_code,
+            }
+        )
+        return payload
 
 
 class BingXHttpClient:
@@ -120,14 +185,14 @@ class BingXHttpClient:
         )
         self.demo_mode = bool(demo_mode)
 
+        self._base_urls: tuple[str, ...]
         if base_url is None:
-            self._base_urls = (
-                _VST_BASE_URLS if self.demo_mode else _LIVE_BASE_URLS
-            )
+            self._base_urls = _VST_BASE_URLS if self.demo_mode else _LIVE_BASE_URLS
         else:
             self._base_urls = (self._validate_base_url(base_url),)
 
         self.base_url = self._base_urls[0]
+        self.last_attempted_base_url = self.base_url
         self.recv_window = self._validate_integer(
             recv_window,
             field_name="recv_window",
@@ -154,8 +219,7 @@ class BingXHttpClient:
 
         if self.retry_max_delay < self.retry_base_delay:
             raise ValueError(
-                "retry_max_delay must be greater than or equal to "
-                "retry_base_delay."
+                "retry_max_delay must be greater than or equal to " "retry_base_delay."
             )
 
         if source_key is not None:
@@ -172,12 +236,8 @@ class BingXHttpClient:
 
         self.source_key = source_key
         self._sleep = sleep
-        self._clock_ms = clock_ms or (
-            lambda: time.time_ns() // 1_000_000
-        )
-        self._rate_limiter = rate_limiter or RateLimiter(
-            requests_per_second
-        )
+        self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
+        self._rate_limiter = rate_limiter or RateLimiter(requests_per_second)
 
         self._client = http_client
         self._owns_client = http_client is None
@@ -194,6 +254,7 @@ class BingXHttpClient:
         *,
         weight: float = 1.0,
         retry_safe: bool | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """Execute one JSON request and return the validated response object."""
 
@@ -207,19 +268,27 @@ class BingXHttpClient:
             )
 
         request_params = self._normalize_params(params)
-        request_data = (
-            None if data is None else self._normalize_params(data)
-        )
+        request_data = None if data is None else self._normalize_params(data)
 
         # Current BingX swap endpoints require a millisecond timestamp.
         request_params.setdefault("timestamp", str(self._timestamp_ms()))
 
-        headers: dict[str, str] = {
-            "Accept": "application/json",
-        }
+        request_headers = dict(_DEFAULT_REQUEST_HEADERS)
+        if headers is not None:
+            for name, value in headers.items():
+                normalized_name = self._required_text(
+                    name,
+                    field_name="header name",
+                )
+                if normalized_name.casefold() in _PROTECTED_REQUEST_HEADERS:
+                    raise ValueError("credential headers cannot be overridden")
+                request_headers[normalized_name] = self._required_text(
+                    value,
+                    field_name="header value",
+                )
 
         if self.source_key is not None:
-            headers["X-SOURCE-KEY"] = self.source_key
+            request_headers["X-SOURCE-KEY"] = self.source_key
 
         if signed:
             self._require_credentials()
@@ -228,10 +297,8 @@ class BingXHttpClient:
                 str(self.recv_window),
             )
             signing_string = self._build_signing_string(request_params)
-            request_params["signature"] = self._generate_signature(
-                signing_string
-            )
-            headers["X-BX-APIKEY"] = self.api_key or ""
+            request_params["signature"] = self._generate_signature(signing_string)
+            request_headers["X-BX-APIKEY"] = self.api_key or ""
 
         if retry_safe is None:
             retry_safe = normalized_method in {"GET", "HEAD", "OPTIONS"}
@@ -241,9 +308,8 @@ class BingXHttpClient:
 
         for attempt_index in range(attempts):
             await self._rate_limiter.acquire(weight)
-            base_url = self._base_urls[
-                min(attempt_index, len(self._base_urls) - 1)
-            ]
+            base_url = self._base_urls[min(attempt_index, len(self._base_urls) - 1)]
+            self.last_attempted_base_url = base_url
             url = self._build_url(
                 base_url,
                 normalized_endpoint,
@@ -254,21 +320,18 @@ class BingXHttpClient:
                 response = await self._send(
                     normalized_method,
                     url,
-                    headers=headers,
+                    headers=request_headers,
                     data=request_data,
                 )
                 payload = self._decode_response(
                     response,
-                    operation=(
-                        f"{normalized_method} {normalized_endpoint}"
-                    ),
+                    operation=(f"{normalized_method} {normalized_endpoint}"),
+                    signed=signed,
                 )
                 self._raise_for_error_payload(
                     payload,
                     status_code=response.status_code,
-                    operation=(
-                        f"{normalized_method} {normalized_endpoint}"
-                    ),
+                    operation=(f"{normalized_method} {normalized_endpoint}"),
                 )
                 return payload
             except asyncio.CancelledError:
@@ -276,45 +339,38 @@ class BingXHttpClient:
             except ExchangeError as exc:
                 last_error = exc
 
-                if (
-                    attempt_index + 1 >= attempts
-                    or not exc.retryable
-                ):
+                if attempt_index + 1 >= attempts or not exc.retryable:
                     raise
 
-                await self._sleep(
-                    self._retry_delay(attempt_index, exc)
-                )
+                await self._sleep(self._retry_delay(attempt_index, exc))
             except httpx.TimeoutException as exc:
-                last_error = NetworkError(
-                    message="BingX request timed out.",
-                    exchange="bingx",
-                    operation=(
-                        f"{normalized_method} {normalized_endpoint}"
+                operation = f"{normalized_method} {normalized_endpoint}"
+                last_error = BingXTransportError(
+                    diagnostic=classify_transport_exception(
+                        exc,
+                        attempted_host=base_url,
                     ),
+                    operation=operation,
                 )
 
                 if attempt_index + 1 >= attempts:
                     raise last_error from exc
 
-                await self._sleep(
-                    self._retry_delay(attempt_index, last_error)
-                )
+                await self._sleep(self._retry_delay(attempt_index, last_error))
             except httpx.TransportError as exc:
-                last_error = NetworkError(
-                    message="BingX transport request failed.",
-                    exchange="bingx",
-                    operation=(
-                        f"{normalized_method} {normalized_endpoint}"
+                operation = f"{normalized_method} {normalized_endpoint}"
+                last_error = BingXTransportError(
+                    diagnostic=classify_transport_exception(
+                        exc,
+                        attempted_host=base_url,
                     ),
+                    operation=operation,
                 )
 
                 if attempt_index + 1 >= attempts:
                     raise last_error from exc
 
-                await self._sleep(
-                    self._retry_delay(attempt_index, last_error)
-                )
+                await self._sleep(self._retry_delay(attempt_index, last_error))
 
         assert last_error is not None
         raise last_error
@@ -359,6 +415,25 @@ class BingXHttpClient:
             data.get("serverTime"),
             field_name="serverTime",
             minimum=0,
+        )
+
+    async def diagnose_server_time(self) -> BingXTransportDiagnostic:
+        """Run the public v2 server-time path and return only safe diagnostics."""
+
+        try:
+            server_time = await self.get_server_time()
+        except Exception as exc:
+            return classify_transport_exception(
+                exc,
+                attempted_host=self.last_attempted_base_url,
+            )
+        return BingXTransportDiagnostic(
+            attempted_host=_sanitized_host(self.last_attempted_base_url),
+            transport_stage="complete",
+            exception_type=None,
+            sanitized_errno=None,
+            reason_code="ok",
+            server_time_ms=server_time,
         )
 
     async def get_symbols(self) -> list[dict[str, Any]]:
@@ -486,10 +561,7 @@ class BingXHttpClient:
             signed=False,
         )
 
-        return [
-            self._parse_kline(item)
-            for item in self._sequence_data(response)
-        ]
+        return [self._parse_kline(item) for item in self._sequence_data(response)]
 
     async def get_recent_trades(
         self,
@@ -528,11 +600,7 @@ class BingXHttpClient:
             side = item.get("side")
 
             if side is None:
-                side = (
-                    "SELL"
-                    if bool(item.get("buyerMaker", False))
-                    else "BUY"
-                )
+                side = "SELL" if bool(item.get("buyerMaker", False)) else "BUY"
 
             trades.append(
                 BingXTrade(
@@ -623,8 +691,7 @@ class BingXHttpClient:
                 "equity",
                 item.get(
                     "marginBalance",
-                    Decimal(str(wallet_balance))
-                    + Decimal(str(unrealized_pnl)),
+                    Decimal(str(wallet_balance)) + Decimal(str(unrealized_pnl)),
                 ),
             )
             available = item.get(
@@ -716,11 +783,7 @@ class BingXHttpClient:
                     isolated_margin=(
                         item.get("isolatedMargin")
                         if item.get("isolatedMargin") is not None
-                        else (
-                            item.get("initialMargin")
-                            if isolated
-                            else None
-                        )
+                        else (item.get("initialMargin") if isolated else None)
                     ),
                 )
             )
@@ -889,11 +952,7 @@ class BingXHttpClient:
         else:
             items = []
 
-        return [
-            self._parse_order(item)
-            for item in items
-            if isinstance(item, Mapping)
-        ]
+        return [self._parse_order(item) for item in items if isinstance(item, Mapping)]
 
     async def set_leverage(
         self,
@@ -1032,6 +1091,7 @@ class BingXHttpClient:
         response: httpx.Response,
         *,
         operation: str,
+        signed: bool,
     ) -> dict[str, Any]:
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
@@ -1043,7 +1103,7 @@ class BingXHttpClient:
                 operation=operation,
             )
 
-        if response.status_code in {401, 403}:
+        if signed and response.status_code in {401, 403}:
             raise AuthenticationError(
                 message="BingX authentication was rejected.",
                 exchange="bingx",
@@ -1106,9 +1166,7 @@ class BingXHttpClient:
             return
 
         message = str(
-            payload.get("msg")
-            or payload.get("message")
-            or "BingX request failed."
+            payload.get("msg") or payload.get("message") or "BingX request failed."
         ).strip()
         exception_type: type[ExchangeError]
 
@@ -1189,8 +1247,7 @@ class BingXHttpClient:
         params: Mapping[str, str],
     ) -> str:
         query = "&".join(
-            f"{quote(key, safe='-_.~')}="
-            f"{quote(value, safe='-_.~')}"
+            f"{quote(key, safe='-_.~')}=" f"{quote(value, safe='-_.~')}"
             for key, value in sorted(params.items())
         )
 
@@ -1257,9 +1314,7 @@ class BingXHttpClient:
         if isinstance(value, Enum):
             return value.value
 
-        raise TypeError(
-            f"Unsupported request parameter type: {type(value).__name__}"
-        )
+        raise TypeError(f"Unsupported request parameter type: {type(value).__name__}")
 
     def _timestamp_ms(self) -> int:
         value = self._clock_ms()
@@ -1268,9 +1323,7 @@ class BingXHttpClient:
             raise TypeError("clock_ms must return an integer.")
 
         if value < 0:
-            raise ValueError(
-                "clock_ms must return a non-negative integer."
-            )
+            raise ValueError("clock_ms must return a non-negative integer.")
 
         return value
 
@@ -1306,10 +1359,7 @@ class BingXHttpClient:
     ) -> Sequence[Any]:
         data = response.get("data", [])
 
-        if (
-            not isinstance(data, Sequence)
-            or isinstance(data, (str, bytes, bytearray))
-        ):
+        if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
             raise ExchangeError(
                 message="BingX response data must be an array.",
                 exchange="bingx",
@@ -1496,19 +1546,13 @@ class BingXHttpClient:
         *,
         environment_name: str,
     ) -> str | None:
-        candidate = (
-            os.getenv(environment_name)
-            if value is None
-            else value
-        )
+        candidate = os.getenv(environment_name) if value is None else value
 
         if candidate is None:
             return None
 
         if not isinstance(candidate, str):
-            raise TypeError(
-                f"{environment_name} must be a string or None."
-            )
+            raise TypeError(f"{environment_name} must be a string or None.")
 
         normalized = candidate.strip()
         return normalized or None
@@ -1543,20 +1587,16 @@ class BingXHttpClient:
         try:
             normalized = int(value)
         except (TypeError, ValueError) as exc:
-            raise TypeError(
-                f"{field_name} must be an integer."
-            ) from exc
+            raise TypeError(f"{field_name} must be an integer.") from exc
 
         if normalized < minimum:
             raise ValueError(
-                f"{field_name} must be greater than or equal to "
-                f"{minimum}."
+                f"{field_name} must be greater than or equal to " f"{minimum}."
             )
 
         if maximum is not None and normalized > maximum:
             raise ValueError(
-                f"{field_name} must be less than or equal to "
-                f"{maximum}."
+                f"{field_name} must be less than or equal to " f"{maximum}."
             )
 
         return normalized
@@ -1573,9 +1613,7 @@ class BingXHttpClient:
         )
 
         if normalized == 0:
-            raise ValueError(
-                f"{field_name} must be greater than zero."
-            )
+            raise ValueError(f"{field_name} must be greater than zero.")
 
         return normalized
 
@@ -1597,15 +1635,131 @@ class BingXHttpClient:
             raise ValueError(f"{field_name} must be finite.")
 
         if normalized < 0:
-            raise ValueError(
-                f"{field_name} must be greater than or equal to zero."
-            )
+            raise ValueError(f"{field_name} must be greater than or equal to zero.")
 
         return normalized
 
 
+def classify_transport_exception(
+    error: BaseException,
+    *,
+    attempted_host: str,
+) -> BingXTransportDiagnostic:
+    """Classify a complete exception chain without exposing its text."""
+
+    chain = _exception_chain(error)
+    reason_code = "unknown_transport_failure"
+    transport_stage = "transport"
+    matched: BaseException = chain[0]
+
+    matchers: tuple[tuple[str, str, Callable[[BaseException], bool]], ...] = (
+        (
+            "read_timeout",
+            "response_read",
+            lambda item: isinstance(item, httpx.ReadTimeout),
+        ),
+        (
+            "connect_timeout",
+            "connect",
+            lambda item: isinstance(item, httpx.ConnectTimeout)
+            or isinstance(item, TimeoutError)
+            or _exception_errno(item) in _CONNECT_TIMEOUT_ERRNOS,
+        ),
+        (
+            "proxy_connection_failure",
+            "proxy_connect",
+            lambda item: isinstance(item, httpx.ProxyError),
+        ),
+        (
+            "certificate_verification_failure",
+            "tls_handshake",
+            lambda item: isinstance(item, ssl.SSLCertVerificationError),
+        ),
+        (
+            "tls_handshake_failure",
+            "tls_handshake",
+            lambda item: isinstance(item, ssl.SSLError),
+        ),
+        (
+            "dns_failure",
+            "dns_resolution",
+            lambda item: isinstance(item, socket.gaierror)
+            or _exception_errno(item) in _DNS_ERRNOS,
+        ),
+        (
+            "connection_refused",
+            "connect",
+            lambda item: isinstance(item, ConnectionRefusedError)
+            or _exception_errno(item) in _CONNECTION_REFUSED_ERRNOS,
+        ),
+        (
+            "connection_reset",
+            "transport",
+            lambda item: isinstance(item, ConnectionResetError)
+            or _exception_errno(item) in _CONNECTION_RESET_ERRNOS,
+        ),
+    )
+    for candidate_reason, candidate_stage, matcher in matchers:
+        match = next((item for item in chain if matcher(item)), None)
+        if match is not None:
+            reason_code = candidate_reason
+            transport_stage = candidate_stage
+            matched = match
+            break
+    else:
+        exchange_error = next(
+            (item for item in chain if isinstance(item, ExchangeError)),
+            None,
+        )
+        if exchange_error is not None and exchange_error.error_code is not None:
+            reason_code = "http_status_failure"
+            transport_stage = "response_status"
+            matched = exchange_error
+
+    return BingXTransportDiagnostic(
+        attempted_host=_sanitized_host(attempted_host),
+        transport_stage=transport_stage,
+        exception_type=type(matched).__name__,
+        sanitized_errno=_exception_errno(matched),
+        reason_code=reason_code,
+    )
+
+
+def _exception_chain(error: BaseException) -> tuple[BaseException, ...]:
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return tuple(chain)
+
+
+def _exception_errno(error: BaseException) -> int | None:
+    for name in ("winerror", "errno"):
+        value = getattr(error, name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _sanitized_host(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or parsed.hostname is None:
+            return "unknown"
+        port = "" if parsed.port is None else f":{parsed.port}"
+        return f"https://{parsed.hostname}{port}"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
 __all__ = (
     "AsyncSleeper",
+    "BingXTransportDiagnostic",
+    "BingXTransportError",
     "BingXHttpClient",
     "ClockMilliseconds",
+    "classify_transport_exception",
 )

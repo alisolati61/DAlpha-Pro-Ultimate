@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import socket
+import ssl
 from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
@@ -13,7 +15,11 @@ from urllib.parse import parse_qsl
 import httpx
 import pytest
 
-from src.exchange.bingx_client import BingXHttpClient
+from src.exchange.bingx_client import (
+    BingXHttpClient,
+    BingXTransportError,
+    classify_transport_exception,
+)
 from src.exchange.exceptions import (
     AuthenticationError,
     InsufficientFundsError,
@@ -37,6 +43,16 @@ def run(coroutine: Any) -> Any:
 
 def unlimited_rate_limiter() -> RateLimiter:
     return RateLimiter(1_000_000)
+
+
+def chained_error(cause: BaseException) -> RuntimeError:
+    try:
+        raise cause
+    except BaseException as error:
+        try:
+            raise RuntimeError("outer-private-detail") from error
+        except RuntimeError as wrapped:
+            return wrapped
 
 
 def build_client(
@@ -66,9 +82,7 @@ def test_signed_request_uses_canonical_unencoded_signature() -> None:
             request=request,
         )
 
-    client, http_client = build_client(
-        httpx.MockTransport(handler)
-    )
+    client, http_client = build_client(httpx.MockTransport(handler))
     original = {
         "symbol": "BTC-USDT",
         "quantity": Decimal("0.0100"),
@@ -93,8 +107,7 @@ def test_signed_request_uses_canonical_unencoded_signature() -> None:
         "timestamp": "1700000000000",
     }
     signing_string = "&".join(
-        f"{key}={value}"
-        for key, value in sorted(signing_params.items())
+        f"{key}={value}" for key, value in sorted(signing_params.items())
     )
     expected_signature = hmac.new(
         b"api-secret",
@@ -129,9 +142,7 @@ def test_public_request_has_timestamp_without_credentials() -> None:
             request=request,
         )
 
-    http_client = httpx.AsyncClient(
-        transport=httpx.MockTransport(handler)
-    )
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = BingXHttpClient(
         http_client=http_client,
         rate_limiter=unlimited_rate_limiter(),
@@ -151,6 +162,10 @@ def test_public_request_has_timestamp_without_credentials() -> None:
 
     assert query == {"timestamp": "123"}
     assert "X-BX-APIKEY" not in request.headers
+    assert request.headers["Accept"] == "application/json"
+    assert request.headers["User-Agent"] == "DAlpha-Pro-Ultimate/1.0"
+    assert "api-key" not in repr(request.headers)
+    assert "api-secret" not in repr(request.headers)
 
     run(http_client.aclose())
 
@@ -203,15 +218,258 @@ def test_network_retry_uses_official_fallback_domain() -> None:
         sleep=sleep,
     )
 
-    assert run(
-        client.request("GET", "/public", signed=False)
-    )["data"] == {"ok": True}
+    assert run(client.request("GET", "/public", signed=False))["data"] == {"ok": True}
     assert hosts == [
         "open-api.bingx.com",
         "open-api.bingx.pro",
     ]
     assert delays == [0.25]
 
+    run(http_client.aclose())
+
+
+def test_endpoint_headers_safely_override_defaults() -> None:
+    captured: dict[str, Any] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json={"code": 0}, request=request)
+
+    client, http_client = build_client(httpx.MockTransport(handler))
+    run(
+        client.request(
+            "GET",
+            "/public",
+            signed=False,
+            headers={"Accept": "application/vnd.bingx+json", "X-Test": "safe"},
+        )
+    )
+    request = captured["request"]
+    assert request.headers["Accept"] == "application/vnd.bingx+json"
+    assert request.headers["X-Test"] == "safe"
+    assert request.headers["User-Agent"] == "DAlpha-Pro-Ultimate/1.0"
+    with pytest.raises(ValueError):
+        run(
+            client.request(
+                "GET",
+                "/public",
+                signed=False,
+                headers={"X-BX-APIKEY": "must-not-be-sent"},
+            )
+        )
+    run(http_client.aclose())
+
+
+def test_vst_connection_refusal_falls_back_and_records_successful_host() -> None:
+    hosts: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if len(hosts) == 1:
+            raise httpx.ConnectError(
+                "refused",
+                request=request,
+            ) from ConnectionRefusedError(10061, "refused")
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"serverTime": 123}},
+            request=request,
+        )
+
+    client, http_client = build_client(
+        httpx.MockTransport(handler),
+        demo_mode=True,
+        max_retries=1,
+    )
+
+    assert run(client.get_server_time()) == 123
+    assert hosts == [
+        "open-api-vst.bingx.com",
+        "open-api-vst.bingx.pro",
+    ]
+    assert client.last_attempted_base_url == "https://open-api-vst.bingx.pro"
+    run(http_client.aclose())
+
+
+@pytest.mark.parametrize(
+    ("cause", "reason_code", "stage", "errno"),
+    [
+        (
+            socket.gaierror(11001, "private-dns"),
+            "dns_failure",
+            "dns_resolution",
+            11001,
+        ),
+        (
+            ConnectionRefusedError(10061, "private-refused"),
+            "connection_refused",
+            "connect",
+            10061,
+        ),
+        (
+            ConnectionResetError(10054, "private-reset"),
+            "connection_reset",
+            "transport",
+            10054,
+        ),
+        (
+            httpx.ProxyError("private-proxy"),
+            "proxy_connection_failure",
+            "proxy_connect",
+            None,
+        ),
+        (
+            ssl.SSLCertVerificationError(1, "private-certificate"),
+            "certificate_verification_failure",
+            "tls_handshake",
+            1,
+        ),
+        (
+            ssl.SSLError(1, "private-handshake"),
+            "tls_handshake_failure",
+            "tls_handshake",
+            1,
+        ),
+        (
+            httpx.ConnectTimeout("private-connect-timeout"),
+            "connect_timeout",
+            "connect",
+            None,
+        ),
+        (
+            httpx.ReadTimeout("private-read-timeout"),
+            "read_timeout",
+            "response_read",
+            None,
+        ),
+        (
+            RuntimeError("private-unknown"),
+            "unknown_transport_failure",
+            "transport",
+            None,
+        ),
+    ],
+)
+def test_transport_exception_chain_classification_is_sanitized(
+    cause: BaseException,
+    reason_code: str,
+    stage: str,
+    errno: int | None,
+) -> None:
+    diagnostic = classify_transport_exception(
+        chained_error(cause),
+        attempted_host=(
+            "https://user:password@open-api-vst.bingx.com/"
+            "private/path?signature=secret"
+        ),
+    )
+    assert diagnostic.reason_code == reason_code
+    assert diagnostic.transport_stage == stage
+    assert diagnostic.sanitized_errno == errno
+    assert diagnostic.attempted_host == "https://open-api-vst.bingx.com"
+    rendered = repr(diagnostic.to_dict())
+    for secret in (
+        "password",
+        "private",
+        "signature",
+        "secret",
+        "user",
+    ):
+        assert secret not in rendered
+
+
+def test_http_status_transport_classification() -> None:
+    error = AuthenticationError(
+        message="private response",
+        exchange="bingx",
+        error_code=403,
+        raw_response={
+            "api_key": "private-key",
+            "signature": "private-signature",
+        },
+    )
+    diagnostic = classify_transport_exception(
+        error,
+        attempted_host="https://open-api-vst.bingx.pro/private?secret=value",
+    )
+    assert diagnostic.reason_code == "http_status_failure"
+    assert diagnostic.transport_stage == "response_status"
+    assert diagnostic.exception_type == "AuthenticationError"
+    assert diagnostic.attempted_host == "https://open-api-vst.bingx.pro"
+    rendered = repr(diagnostic.to_dict())
+    assert "private" not in rendered
+    assert "signature" not in rendered
+
+
+def test_client_raises_public_diagnostic_transport_error() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("private") from ConnectionRefusedError(
+            10061,
+            "private-host",
+        )
+
+    client, http_client = build_client(
+        httpx.MockTransport(handler),
+        base_url="https://open-api-vst.bingx.com/private?signature=secret",
+        max_retries=0,
+    )
+    with pytest.raises(BingXTransportError) as captured:
+        run(client.get_server_time())
+    error = captured.value
+    assert error.reason_code == "connection_refused"
+    assert error.attempted_host == "https://open-api-vst.bingx.com"
+    assert error.transport_stage == "connect"
+    assert error.exception_type == "ConnectionRefusedError"
+    assert error.sanitized_errno == 10061
+    rendered = repr(error.to_dict())
+    assert "private" not in rendered
+    assert "signature" not in rendered
+    assert "secret" not in rendered
+    run(http_client.aclose())
+
+
+def test_public_server_time_diagnostic_uses_only_public_v2_endpoint() -> None:
+    captured: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"serverTime": 123}},
+            request=request,
+        )
+
+    client, http_client = build_client(
+        httpx.MockTransport(handler),
+        max_retries=0,
+    )
+    diagnostic = run(client.diagnose_server_time())
+    assert diagnostic.reason_code == "ok"
+    assert diagnostic.server_time_ms == 123
+    assert len(captured) == 1
+    assert captured[0].method == "GET"
+    assert captured[0].url.path == "/openApi/swap/v2/server/time"
+    assert "X-BX-APIKEY" not in captured[0].headers
+    run(http_client.aclose())
+
+
+def test_public_http_403_is_sanitized_non_tls_http_failure() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            content=b"secret response body",
+            request=request,
+        )
+
+    client, http_client = build_client(
+        httpx.MockTransport(handler),
+        max_retries=0,
+    )
+    with pytest.raises(Exception) as captured:
+        run(client.get_server_time())
+    rendered = repr(captured.value)
+    assert "secret response body" not in rendered
+    assert "tls" not in rendered.casefold()
     run(http_client.aclose())
 
 
@@ -308,9 +566,7 @@ def test_invalid_json_is_wrapped_without_response_body_leak() -> None:
             request=request,
         )
 
-    client, http_client = build_client(
-        httpx.MockTransport(handler)
-    )
+    client, http_client = build_client(httpx.MockTransport(handler))
 
     with pytest.raises(Exception) as captured:
         run(client.request("GET", "/endpoint", signed=False))
@@ -328,9 +584,7 @@ class StubClient(BingXHttpClient):
             clock_ms=lambda: 1,
         )
         self.responses = list(responses)
-        self.calls: list[
-            tuple[str, str, Mapping[str, Any] | None, bool]
-        ] = []
+        self.calls: list[tuple[str, str, Mapping[str, Any] | None, bool]] = []
 
     async def request(
         self,
