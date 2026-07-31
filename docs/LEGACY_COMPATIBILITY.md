@@ -8,12 +8,14 @@ Compatibility means "retained because a consumer or public test exists," not
 ## Compatibility rules
 
 1. New runtime composition uses the canonical module named below.
-2. Existing compatibility imports remain unchanged during Phase 1H-1.
+2. Existing consumer-backed compatibility imports remain unchanged through
+   Phase 1H-2.
 3. No legacy model is silently aliased to a canonical model with different
    validation or semantics.
 4. Removal requires both in-repository and known external consumer evidence.
 5. Frozen behavior is not reopened merely to simplify names.
-6. Deprecation and migration occur in a separately reviewed Phase 1H-2 change.
+6. Broad deprecation and contract migration are deferred until after the first
+   controlled Demo unless a proven operational blocker requires them.
 
 ## Entrypoints and configuration
 
@@ -23,7 +25,7 @@ Compatibility means "retained because a consumer or public test exists," not
 | `src.core.kernel.bootstrap.bootstrap()` | `build_runtime()` | Compatibility helper returns only an initialized kernel |
 | `src.data.main` | Explicit `MarketDataService` composition | Import-safe factory, not an application entry point |
 | `src.config.settings` | `src.core.config` for Doctor/runtime | Legacy `BaseSettings` reads environment/`.env`; not used by readiness |
-| `requirements/*.txt` | `pyproject.toml` | Convenience lists are incomplete and unbounded |
+| Removed `requirements/*.txt` lists | `pyproject.toml` | Duplicate lists had zero consumers; `pyproject.toml` is now the sole dependency authority |
 
 The legacy settings module is still consumed by `src.exchange.bingx_websocket`.
 It cannot be removed until that consumer is migrated or formally deprecated.
@@ -70,8 +72,9 @@ The following are not that path:
 - `src.decision.decision_engine` and `src.decision.models` - exported/tested
   older decision API;
 - `src.core.decision_engine` - no in-repository consumer;
-- `src.ai.decision_engine_old`, `market_regime_old`, `scoring_engine_old`, and
-  `strategy_selector_old` - confirmed dead legacy modules;
+- removed `src.ai.decision_engine_old`, `market_regime_old`,
+  `scoring_engine_old`, and `strategy_selector_old` - zero-consumer legacy
+  modules deleted by the bounded Phase 1H-2 manifest;
 - AI, analysis, and core `market_regime.py` modules - incompatible parallel
   engines used by different older consumers;
 - intelligence trend/watchlist engines - deferred/legacy graphs, not recorded
@@ -93,12 +96,12 @@ consumer migration and serialization compatibility are proven.
 
 Empty package `__init__.py` files remain legitimate markers because removing
 them may change setuptools discovery, Python package identity, or pytest import
-behavior. Empty feature modules, `_old.py` files, typo artifacts, and
-zero-consumer modules are classified in
-[REPOSITORY_AUDIT.md](REPOSITORY_AUDIT.md). Phase 1H-1 documents them; it does
-not treat their names as implemented capabilities.
+behavior. Phase 1H-2 removed only the reviewed `_old.py`, empty feature,
+misnamed/extensionless scaffold, and obsolete live-network-script set.
+[REPOSITORY_AUDIT.md](REPOSITORY_AUDIT.md) records every removed path and the
+zero-consumer evidence.
 
-## Phase 1H-2 migration sequence
+## Post-controlled-Demo migration sequence
 
 1. Freeze an external-consumer inventory.
 2. Approve canonical product/package naming.
@@ -106,8 +109,11 @@ not treat their names as implemented capabilities.
 4. Migrate tests and production consumers by family.
 5. Prove import, serialization, lifecycle, and deterministic-output
    compatibility.
-6. Remove only the reviewed dead set.
-7. Run the full pytest, Ruff, mypy, compile, build, and import-safety gates.
+6. Review any further dead set independently; Phase 1H-2 is not a standing
+   authorization for deletion.
+7. Resolve full Ruff/mypy debt without blanket exclusions.
+8. Run the full pytest, static, compile, build, secret, and import-safety
+   gates.
 
 No step may alter frozen risk, signing, request ordering, execution, paper-fill,
 or VST reconciliation behavior.

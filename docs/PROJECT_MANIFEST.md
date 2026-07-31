@@ -1,7 +1,8 @@
 # Project Manifest
 
-This manifest is the status index for the repository at the
-`vst-runtime-freeze-v1` baseline. Architecture details live in
+This manifest is the status index for the repository after the bounded Phase
+1H-2 hardening slice, with runtime behavior frozen at
+`vst-runtime-freeze-v1`. Architecture details live in
 [ARCHITECTURE.md](ARCHITECTURE.md); file-level legacy findings live in
 [REPOSITORY_AUDIT.md](REPOSITORY_AUDIT.md).
 
@@ -16,8 +17,9 @@ This manifest is the status index for the repository at the
 | Runtime display name | `Alpha Pro X Infinity` | core runtime configuration |
 | Supported Python | `>=3.12` | `pyproject.toml` |
 
-These names are inconsistent. They remain unchanged in Phase 1H-1; the
-coordinated migration plan is in the repository audit.
+These names are inconsistent. They remain unchanged through Phase 1H-2; the
+coordinated migration is deferred until after controlled Demo execution unless
+it becomes an operational blocker.
 
 ## Status legend
 
@@ -60,6 +62,7 @@ coordinated migration plan is in the repository audit.
 | VST runtime | `src.vst_runtime` | Protocol-driven synchronous VST coordinator and reconciliation |
 | VST readiness | `src.vst_runtime.readiness`, `scripts/bingx_vst_readiness.py` | Async read-only server-time, balance, and positions validation |
 | Public VST diagnosis | `scripts/bingx_vst_transport_diagnostic.py` | Credential-free server-time transport classification |
+| Repository security | `scripts/scan_repository_secrets.py` | Deterministic value-redacting scan of committed and current repository content |
 
 The exchange and execution libraries are real, tested libraries. They are not
 automatically composed into the installed CLI or default runtime.
@@ -93,7 +96,7 @@ switch. A caller must supply and compose each execution boundary explicitly.
 | `src.shared.value_objects` | Test/public compatibility values parallel to domain values |
 | Generic/AI decision and regime engines | Parallel legacy/deferred surfaces; not the frozen recorded path |
 | `src.config.settings` | Legacy environment/dotenv settings; not used by Doctor or VST readiness |
-| `requirements/*.txt` | Legacy unbounded convenience lists; `pyproject.toml` is authoritative |
+| Removed `requirements/*.txt` | Zero-consumer duplicate metadata retired in Phase 1H-2; `pyproject.toml` is the sole authority |
 
 No compatibility module is silently aliased to a canonical contract.
 
@@ -107,7 +110,9 @@ No compatibility module is silently aliased to a canonical contract.
 - read-only BingX VST readiness with bounded clock sampling;
 - sanitized transport diagnostics and deterministic host fallback;
 - fake-only automated VST tests;
-- Doctor-only installed CLI and no automatic exchange wiring.
+- Doctor-only installed CLI and no automatic exchange wiring;
+- deterministic secret scanning with no runtime network or credential output;
+- removal regression coverage for the complete bounded dead-code manifest.
 
 ## Not implemented or not deployment-ready
 
@@ -124,6 +129,20 @@ No compatibility module is silently aliased to a canonical contract.
 
 Files bearing related names may exist as libraries or scaffolds; that does not
 change these statuses.
+
+## Phase 1H-2 repository disposition
+
+- Removed four unreferenced `_old.py` AI modules.
+- Removed 19 zero-byte unsupported/misnamed/extensionless scaffolds.
+- Removed the zero-consumer root live-network ticker script.
+- Retired two incomplete duplicate requirements files.
+- Retained all legitimate package markers and consumer-backed compatibility
+  modules.
+- Retained legacy dotenv settings because
+  `src.exchange.bingx_websocket` and `tests/test_config.py` consume them;
+  Doctor and VST readiness remain non-consumers.
+- Deferred naming, MarketData/value-object consolidation, and full Ruff/mypy
+  cleanup until after controlled Demo unless operationally blocking.
 
 ## Source-of-truth order
 

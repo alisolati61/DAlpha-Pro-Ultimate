@@ -16,32 +16,40 @@ capability.
 | 1F - Paper execution | Complete/frozen | Deterministic in-memory fills, protection, ledger, checkpoints, and reconciliation (`paper-runtime-freeze-v1`) |
 | 1G-1 - BingX VST runtime | Complete/frozen | Fail-closed synchronous coordinator over injected `VstTransport` |
 | 1G-2 - VST readiness | Complete/frozen | Async read-only BingX readiness and public transport diagnosis (`vst-runtime-freeze-v1`) |
-| 1H-1 - Repository truth and CI baseline | Current | Authoritative docs, compatibility/audit inventory, security hygiene, and honest scoped CI |
+| 1H-1 - Repository truth and CI baseline | Complete | Authoritative docs, compatibility/audit inventory, security hygiene, and honest scoped CI |
+| 1H-2 - Bounded cleanup and governance | Complete | Reviewed dead/scaffold removal, obsolete network-script deletion, secret-scanning gate, and single dependency authority |
 
 The independently frozen risk, execution, and exchange libraries are marked by
 `risk-freeze-v1`, `execution-freeze-v1`, and `exchange-freeze-v1`.
 
-## Phase 1H-2 - Repository consolidation
+## Phase 1H-2 delivered boundary
 
-Planned work:
+Phase 1H-2 intentionally did less than the earlier consolidation proposal:
 
-1. Decide the canonical product identity and coordinate the repository,
-   distribution, CLI, display-name, and import-namespace migration.
-2. Migrate consumers away from alternate market-data models and normalizers.
-3. Decide domain versus shared value-object ownership and migrate public/test
-   consumers before removal.
-4. Remove confirmed dead `_old`, empty scaffold, obsolete real-network, and
-   typo files only after a separately reviewed removal manifest.
-5. Resolve repository-wide Ruff and mypy debt, then replace the post-freeze
-   scoped CI baseline with repository-wide static gates.
-6. Reconcile or retire `requirements/*.txt` so dependency metadata has one
-   maintained source.
-7. Decide whether legacy dotenv settings and the websocket consumer remain
-   supported; VST readiness must stay explicit/getpass-only.
-8. Select a license and add it only after owner/legal approval.
+1. removed only 24 source/script paths with complete zero-consumer evidence;
+2. retired the two stale duplicate requirements files;
+3. made `pyproject.toml` the sole dependency authority;
+4. added regression coverage for removed imports and supported neighbors;
+5. added a deterministic, value-redacting secret scan over repository content
+   and committed changes;
+6. retained consumer-backed compatibility and legacy dotenv settings with
+   exact blockers documented.
 
-Phase 1H-2 must preserve all frozen trading, risk, signing, request, fill, and
-reconciliation semantics.
+It did not change frozen trading, risk, signing, request, readiness, execution,
+fill, or reconciliation semantics.
+
+## Post-controlled-Demo repository work
+
+Unless proven to block operations, defer:
+
+- repository/distribution/CLI/import-namespace renaming;
+- MarketData contract consolidation;
+- domain/shared value-object migration;
+- generic decision/regime/normalizer consolidation;
+- repository-wide Ruff cleanup;
+- repository-wide mypy cleanup;
+- further dead-code removal outside a new bounded manifest;
+- license selection.
 
 ## Controlled deployment progression
 
@@ -61,8 +69,9 @@ mutate anything.
 
 Phase 1H plus deployment controls:
 
-- repository-wide static quality gates;
-- canonical naming and contract consolidation;
+- blocking pytest and scoped static quality gates;
+- deterministic tracked-content and committed-diff secret scanning;
+- bounded dead/scaffold removal and authoritative dependency metadata;
 - credential rotation/runbook ownership;
 - operator authorization and auditable configuration;
 - deterministic recovery and negative-path evidence;
@@ -104,6 +113,7 @@ runtime milestone.
 
 ## License decision
 
-No license is selected and no `LICENSE` file should be added during Phase
-1H-1. Phase 1H-2 must record the owner, intended distribution model, third-party
-dependency obligations, and approval before adding license text.
+No license is selected and no `LICENSE` file was added during either Phase
+1H slice. Selection remains a post-controlled-Demo governance decision
+requiring ownership, distribution-model, third-party-obligation, and approval
+review.

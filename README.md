@@ -89,9 +89,9 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-On POSIX shells, activate with `source .venv/bin/activate`. The authoritative
-dependency metadata is `pyproject.toml`; the files under `requirements/` are
-legacy convenience lists and are not the CI installation source.
+On POSIX shells, activate with `source .venv/bin/activate`. `pyproject.toml` is
+the sole dependency and tooling authority. The stale duplicate requirements
+files were retired in Phase 1H-2; CI and local setup both install `.[dev]`.
 
 Run the local Doctor:
 
@@ -140,6 +140,8 @@ The local equivalents of the blocking CI baseline are:
 
 ```powershell
 python -m pytest
+python scripts/scan_repository_secrets.py `
+  --base-ref vst-runtime-freeze-v1
 $ruffFiles = git diff --name-only --diff-filter=ACMR `
   exchange-freeze-v1..HEAD -- "*.py"
 python -m ruff check $ruffFiles
@@ -148,7 +150,8 @@ python -m mypy --follow-imports=skip --ignore-missing-imports `
   src/decision/recorded.py src/decision/replay.py src/strategy src/risk `
   src/execution src/execution_intent src/paper_runtime src/vst_runtime `
   scripts/bingx_vst_readiness.py `
-  scripts/bingx_vst_transport_diagnostic.py
+  scripts/bingx_vst_transport_diagnostic.py `
+  scripts/scan_repository_secrets.py
 python -m compileall -q src scripts main.py
 python -m build
 git diff --check exchange-freeze-v1..HEAD
@@ -173,14 +176,20 @@ must not contact an exchange.
 - Do not add real values to test fixtures. Tests must use unmistakably fake
   constants and injected transports.
 - Readiness output is sanitized and local readiness-output files are ignored.
+- Run the local secret scan before committing:
+  `python scripts/scan_repository_secrets.py --base-ref vst-runtime-freeze-v1`.
+  The stdlib/Git-only scanner checks committed additions, tracked/staged
+  content, and non-ignored working files.
+  It permits only a reviewed set of obvious fake test values and reports rule,
+  path, and line metadata without printing a matched value.
 
 ## Current limitations
 
 The repository contains older analysis, domain, shared-value-object,
 backtesting, exchange, and execution surfaces alongside the canonical recorded
 runtime. Their presence is not a claim that they are composed into an
-end-to-end production system. The repository audit identifies unsupported
-scaffolds and compatibility boundaries.
+end-to-end production system. The repository audit records the bounded dead
+set removed in Phase 1H-2 and the compatibility boundaries that remain.
 
 The following are intentionally deferred:
 
@@ -212,4 +221,4 @@ Each transition requires its own safety review. See the
 
 No license has been selected and no `LICENSE` file is present. Until that
 decision is made, no permission to copy, modify, or redistribute is granted by
-this repository. The decision is tracked for Phase 1H-2.
+this repository. The decision remains a post-controlled-Demo governance item.

@@ -18,6 +18,25 @@ not be used to bypass subsystem freeze rules.
 - [x] Keep Phase 1G readiness getpass-only and automated VST tests fake-only.
 - [x] Record naming and license decisions without renaming or licensing here.
 
+## Phase 1H-2 - Bounded cleanup and governance
+
+- [x] Prove zero static imports, dynamic imports, runtime/CLI references,
+  documentation contracts, and test dependencies for every removal candidate.
+- [x] Remove the four reviewed `_old.py` modules.
+- [x] Remove the 15 reviewed empty feature scaffolds, the misnamed
+  `exchange/connectors/init.py`, and three extensionless exchange scaffolds.
+- [x] Delete root `test_exchange.py`; its only behavior was an obsolete,
+  zero-consumer real-network CCXT ticker call.
+- [x] Add import/path regression coverage for the complete removal manifest.
+- [x] Add a deterministic, value-redacting, stdlib/Git secret scanner to CI.
+- [x] Cover tracked/staged/worktree content and per-commit additions after
+  `vst-runtime-freeze-v1`.
+- [x] Restrict fake credential allowances to a reviewed exact test-only set.
+- [x] Retire zero-consumer `requirements/base.txt` and
+  `requirements/dev.txt`; `pyproject.toml` is the sole dependency authority.
+- [x] Preserve the getpass-only Phase 1G readiness boundary.
+- [x] Record every retained compatibility blocker and post-Demo deferral.
+
 ## Pre-existing quality debt
 
 These failures predate Phase 1H-1 and are not suppressed with repository-wide
@@ -31,13 +50,15 @@ ignore rules:
   mypy baseline.
 - [ ] Expand both CI static gates to all Python files after the findings are
   fixed; do not make them non-blocking and do not add blanket exclusions.
-- [ ] Reconcile the unbounded `requirements/base.txt` and
-  `requirements/dev.txt` lists with authoritative `pyproject.toml`.
+- [x] Remove the unbounded duplicate requirements lists and retain
+  authoritative `pyproject.toml`.
 - [ ] Remove import-time dotenv settings from supported code or formally
   retain them as a compatibility contract. Current VST readiness is not a
   consumer.
-- [ ] Move or retire root `test_exchange.py`; it is outside pytest discovery
-  and performs a real CCXT/BingX connection when run manually.
+- [ ] Reassess zero-direct-import `orjson` and `tenacity` declarations with
+  external-consumer evidence after controlled Demo.
+- [x] Remove root `test_exchange.py` after proving zero consumers and duplicate
+  fake-based coverage for its non-unique behavior.
 
 The exact file inventory and classifications are in
 [REPOSITORY_AUDIT.md](REPOSITORY_AUDIT.md).
@@ -158,7 +179,11 @@ src/shared/result/result.py                                 return-value:2
 
 </details>
 
-## Phase 1H-2 - Consolidation plan
+## Deferred until after controlled Demo
+
+The following broad migrations do not block the first controlled Demo and were
+explicitly excluded from Phase 1H-2. Reopen one only for a proven operational
+blocker or as a separately approved post-Demo phase.
 
 ### Naming
 
@@ -182,20 +207,17 @@ src/shared/result/result.py                                 return-value:2
 
 ### Removal
 
-- [ ] Review and remove confirmed dead `_old.py` modules.
-- [ ] Review and remove zero-consumer empty feature scaffolds and misnamed
-  markers.
-- [ ] Remove the obsolete live-network root script or relocate it behind an
-  explicit manual-test policy.
 - [ ] Keep legitimate empty `__init__.py` package markers unless packaging and
   pytest import behavior are proven unchanged.
+- [ ] Review any additional zero-consumer candidates under a new bounded
+  manifest; this phase grants no general cleanup authority.
 
 ### Security and governance
 
 - [ ] Select a license after ownership, distribution intent, and third-party
   obligations are reviewed. No license is granted by the current repository.
-- [ ] Add secret scanning to CI with a reviewed baseline; do not whitelist real
-  credentials.
+- [x] Add deterministic secret scanning to CI with a reviewed fake-only
+  test-value allowlist and value-redacting output.
 - [ ] Define credential rotation, least-privilege VST policy, and incident
   ownership before any demo-order phase.
 - [ ] Decide artifact-retention policy for sanitized diagnostics and
@@ -210,4 +232,7 @@ src/shared/result/result.py                                 return-value:2
 - [ ] Evaluate MT5, production AI/ML, multi-exchange orchestration, dashboard,
   and persistence only as separately scoped future phases.
 
-None of these deferred items is authorized by Phase 1H-1.
+Repository/package/CLI/import namespace renaming, MarketData consolidation,
+broad value-object migration, full Ruff cleanup, and full mypy cleanup remain
+deferred until after controlled Demo unless they become operational blockers.
+None of the deployment items above is authorized by Phase 1H-2.

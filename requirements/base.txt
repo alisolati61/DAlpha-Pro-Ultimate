@@ -1,7 +1,0 @@
-ccxt
-pydantic
-python-dotenv
-loguru
-httpx
-orjson
-tenacity
