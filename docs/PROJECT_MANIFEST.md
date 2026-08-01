@@ -1,10 +1,11 @@
 # Project Manifest
 
 This manifest is the status index for the repository through the bounded
-manual Phase 1I-1 Demo canary. Phase 1G runtime/readiness contracts remain
-frozen at `vst-runtime-freeze-v1`; Phase 1I-1 narrowly hardened missing-position
-data rejection and corrected host advancement so only network/timeout failures
-move `.com` reads to `.pro`. Architecture details live in
+manual Phase 1I-2 intent-preparation and Phase 1I-1 Demo canary boundaries.
+Phase 1G runtime/readiness contracts remain frozen at `vst-runtime-freeze-v1`;
+Phase 1I-1 narrowly hardened missing-position data rejection and corrected host
+advancement so only network/timeout failures move `.com` reads to `.pro`.
+Architecture details live in
 [ARCHITECTURE.md](ARCHITECTURE.md); file-level legacy findings live in
 [REPOSITORY_AUDIT.md](REPOSITORY_AUDIT.md).
 
@@ -64,6 +65,7 @@ it becomes an operational blocker.
 | VST runtime | `src.vst_runtime` | Protocol-driven synchronous VST coordinator and reconciliation |
 | VST readiness | `src.vst_runtime.readiness`, `scripts/bingx_vst_readiness.py` | Async read-only server-time, balance, and positions validation |
 | Public VST diagnosis | `scripts/bingx_vst_transport_diagnostic.py` | Credential-free server-time transport classification |
+| Manual intent preparation | `src.vst_runtime.intent_preparation`, `scripts/bingx_vst_prepare_intent.py` | Offline four-input composition through frozen strategy/decision/risk/intent gates to a `READY`-only ignored artifact |
 | Manual VST Demo canary | `src.vst_runtime.demo_order`, `src.vst_runtime.demo_transport`, `scripts/bingx_vst_demo_order.py` | Canonical dry-run plan and exactly gated one-order submit/query/cancel/reconcile lifecycle |
 | Repository security | `scripts/scan_repository_secrets.py` | Deterministic value-redacting scan of committed and current repository content |
 
@@ -81,11 +83,16 @@ RecordedMarketDataPayload
   -> explicit account + approved-risk + constraints + policy
   -> ExecutionIntent
   -> paper coordinator OR explicitly injected VST coordinator
-                     OR manual async VST Demo canary
+                     OR Phase 1I-2 READY-only local artifact
+                        -> Phase 1I-1 manual async VST Demo dry run
 ```
 
-There is no automatic risk-snapshot producer and no automatic paper-to-VST
-switch. A caller must supply and compose each execution boundary explicitly.
+There is no default-runtime risk-snapshot producer and no automatic
+paper-to-VST switch. Phase 1I-2 can derive an approved-risk snapshot only after
+one explicit frozen risk evaluation over four operator-supplied canonical
+documents. A caller must still supply and compose each boundary explicitly.
+The account/risk-state and constraint documents are not exchange-attested, and
+there is no automatic shared or durable risk-state checkpoint.
 
 ## Compatibility and parallel surfaces
 
@@ -114,6 +121,11 @@ No compatibility module is silently aliased to a canonical contract.
 - read-only BingX VST readiness with bounded clock sampling;
 - sanitized transport diagnostics and deterministic host fallback;
 - fake-only automated VST tests;
+- offline, credential-free Phase 1I-2 preparation with strict canonical
+  market/account/constraint/policy schemas, supplied source-digest verification,
+  freshness checks, source and risk provenance digests, fixed `2x` risk
+  evaluation and `10`-notional ceiling, and exclusive `READY`-only artifact
+  creation;
 - dry-run-first manual VST Demo canary with exact intent/plan digests, current
   constraints/account reads, a narrow adapter, one non-retryable protected
   limit submission, deterministic client-ID recovery, and fail-closed final
@@ -125,6 +137,9 @@ No compatibility module is silently aliased to a canonical contract.
 ## Not implemented or not deployment-ready
 
 - automatic, unattended, or default-runtime VST Demo submission;
+- exchange-attested acquisition/currentness for Phase 1I-2 account,
+  risk-state, and instrument-constraint inputs;
+- automatic shared/durable risk-state checkpointing across preparation runs;
 - shadow-mode orchestration;
 - micro-live or unrestricted live operation;
 - MT5;

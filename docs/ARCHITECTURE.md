@@ -1,9 +1,10 @@
 # Architecture
 
 This document describes the code that is actually composed and tested through
-the manual Phase 1I-1 VST Demo canary. Frozen Phase 1G contracts remain at the
-`vst-runtime-freeze-v1` baseline. Historical and scaffold modules are not
-promoted to production status.
+the manual Phase 1I-2 intent-preparation and Phase 1I-1 VST Demo canary
+boundaries. Frozen Phase 1G contracts remain at the `vst-runtime-freeze-v1`
+baseline. Historical and scaffold modules are not promoted to production
+status.
 
 ## Runtime entry points
 
@@ -15,6 +16,7 @@ promoted to production status.
 | `src.core.kernel.bootstrap.bootstrap()` | Compatibility-only | Returns an initialized `Kernel` |
 | `scripts/bingx_vst_readiness.py` | Explicit manual tool | Read-only VST readiness with hidden credentials |
 | `scripts/bingx_vst_transport_diagnostic.py` | Explicit manual tool | Public server-time transport diagnosis only |
+| `scripts/bingx_vst_prepare_intent.py` | Explicit manual offline tool | Four canonical local inputs to a `READY` intent artifact; no credentials, environment, or network |
 | `scripts/bingx_vst_demo_order.py` | Explicit manual tool | Dry-run-first, one-order VST Demo canary with two-step approval |
 
 `build_runtime()` does not discover, register, start, or connect exchange
@@ -52,8 +54,8 @@ registration order as its tie-breaker. Initialization and startup are
 dependency-first; owned services stop in reverse order.
 
 `RiskOrchestrator` is injected into `DecisionService`; it is not a lifecycle
-service. `RecordedDecisionCoordinator` and VST readiness are also explicit
-orchestration boundaries rather than graph nodes.
+service. `RecordedDecisionCoordinator`, offline intent preparation, and VST
+readiness are also explicit orchestration boundaries rather than graph nodes.
 
 ## Deterministic recorded pipeline
 
@@ -85,8 +87,9 @@ caller must explicitly provide all of the following to
 - `InstrumentConstraints`;
 - `ExecutionPolicy`.
 
-There is no automatic producer or runtime wiring for
-`ApprovedRiskSnapshot` in this baseline.
+There is no default-runtime or automatic producer for `ApprovedRiskSnapshot`.
+The manual Phase 1I-2 boundary described below derives one only after the exact
+frozen risk evaluation returns `APPROVED`.
 
 ### 3. Execution intent
 
@@ -97,6 +100,76 @@ intents; incompatible or unsafe input produces a blocked intent.
 
 An intent with `IntentStatus.READY` may be passed explicitly to one execution
 branch. Nothing in the default runtime performs that handoff automatically.
+
+### 4. Offline manual intent preparation
+
+`src.vst_runtime.intent_preparation.prepare_demo_canary_intent()` is a narrow
+Phase 1I-2 composition root over the existing frozen services. It accepts four
+exact, already-canonical compact JSON documents:
+
+| Schema version | Exact outer fields | Role |
+| --- | --- | --- |
+| `bingx-vst-recorded-market-v1` | `schema_version`, `exchange`, `symbol`, `timeframe`, `events` | One or more sequence-ordered candle events with matching identity and strictly increasing UTC-`Z` timestamps |
+| `bingx-vst-account-v1` | `schema_version`, `observed_at`, `equity`, `available_balance`, `current_exposure`, `open_position_quantity`, `portfolio`, `risk_state` | Fresh execution/account snapshot plus explicit portfolio and kill-switch/circuit-breaker state |
+| `bingx-vst-constraints-v1` | `schema_version`, `exchange`, `symbol`, `observed_at`, `price_tick`, `quantity_step`, `minimum_quantity`, `minimum_notional`, `maximum_quantity` | Fresh instrument bounds and normalization increments |
+| `bingx-vst-execution-policy-v1` | `schema_version`, `execution`, `risk_limits` | Explicit sizing/leverage policy and the frozen risk-limit configuration |
+
+Objects reject missing or additional fields, decimal values are canonical
+decimal strings, every separately supplied source SHA-256 is verified, and all
+inputs reject credential-bearing key names. This first preparation boundary is
+allowlisted only for `BTC-USDT`; every other symbol is unsupported. The
+account and constraint observations and latest candle use exact UTC-`Z` spelling
+and must pass the existing five-minute TTL and five-second future-tolerance
+checks. Symbol, exchange,
+equity, exposure, position, leverage, and constraint relationships are checked
+across documents before the pipeline runs. The explicit execution policy must
+evaluate risk at exactly the canary's worst admitted leverage of `2`, and a
+normalized entry above the fixed `10` notional ceiling is blocked before any
+artifact is written. Expiry is derived only from the canonical final-candle
+timestamp plus the frozen five-minute TTL. Wall-clock time validates freshness
+but is not placed in the artifact, report identity, or any digest.
+
+The boundary composes `RecordedExchangeMarketDataAdapter`,
+`MarketDataService`, `StrategyService`/`MarketStructureStrategy`,
+`DecisionService`, the frozen `RiskOrchestrator`, and
+`ExecutionIntentService`. A private observation wrapper captures the one exact
+frozen risk call and result; it does not change the risk algorithm. Only an
+`APPROVED` result derives an `ApprovedRiskSnapshot`, with the approved candidate
+quantity, policy risk/leverage, and a deterministic `risk_evaluation_id`.
+
+The market, account, constraints, and policy documents are each bound by the
+verified SHA-256 of their exact canonical bytes. Frozen proposal and decision
+IDs remain
+in the intent; `risk_evaluation_id` hashes the input digests, decision ID, and
+exact risk call/result. The final `intent_digest` hashes the exact canonical
+intent bytes. These are local provenance and integrity bindings. They do not
+attest that the operator-supplied account/risk-state or constraint snapshots
+came from BingX or remained current after capture.
+
+Only `IntentStatus.READY` permits exclusive creation of
+`.operator-artifacts/<intent_id>.json`. The canonical report then carries
+`artifact_path`, `intent_digest`, `status`, `symbol`, `side`, `expires_at`,
+`proposal_id`, `decision_id`, `risk_evaluation_id`, and `reason_codes`; a
+blocked/no-action report carries no artifact path or digest. The directory is
+ignored by Git, symlink/conflicting content is rejected, and no other
+persistence is added.
+
+```text
+four fresh operator-supplied canonical documents
+  -> frozen recorded strategy + decision + one risk evaluation
+  -> derived approved-risk snapshot
+  -> frozen ExecutionIntentService
+  -> READY-only local artifact + canonical report
+  -> separate Phase 1I-1 dry run
+  -> operator inspection and stop before submission
+```
+
+The script reads only the four explicit file paths and writes only the ignored
+artifact. It does not read environment/dotenv configuration, collect
+credentials, contact BingX, or expose an exchange read/write operation. There
+is no automatic shared risk-state checkpoint, durable risk state, or
+cross-process synchronization; fresh input acquisition and currentness remain
+operator responsibilities.
 
 ## Paper branch
 

@@ -68,6 +68,7 @@ dist/
 *.tmp
 *.bak
 /readiness-output*.json
+/.operator-artifacts/
 
 # Local databases
 *.db

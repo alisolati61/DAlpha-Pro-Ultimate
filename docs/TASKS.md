@@ -71,6 +71,39 @@ not be used to bypass subsystem freeze rules.
   account manually before another invocation; no frozen automatic recovery
   contract exists.
 
+## Phase 1I-2 - Controlled VST intent preparation
+
+- [x] Add one explicit offline composition root over the frozen recorded
+  adapter, market-data, strategy, decision, risk, and execution-intent services.
+- [x] Require exactly four already-canonical compact JSON inputs: recorded
+  market events, account/portfolio/risk state, instrument constraints, and
+  execution/risk policy; verify every separately supplied source SHA-256 and
+  reject undeclared fields and credential-bearing keys.
+- [x] Require fresh account and constraint observations and a fresh latest
+  candle under the existing intent freshness and future-tolerance bounds.
+- [x] Restrict the first canonical preparation boundary to the reviewed
+  `BTC-USDT` canary symbol and reject all other symbols.
+- [x] Rehydrate explicit account kill-switch and circuit-breaker state locally,
+  capture exactly one frozen risk evaluation, and derive approved-risk input
+  only after that evaluation returns `APPROVED`.
+- [x] Bind exact source-document digests, frozen proposal/decision IDs, the
+  exact risk call/result digest, and the final canonical intent digest.
+- [x] Require risk evaluation at the fixed worst admitted `2x` leverage and
+  block normalized entry notional above the fixed `10` canary ceiling.
+- [x] Create `.operator-artifacts/<intent_id>.json` exclusively only for
+  `READY`; keep blocked/no-action reports free of artifact paths and digests and
+  ignore all local operator artifacts in Git.
+- [x] Keep preparation free of credentials, environment/dotenv loading,
+  network calls, exchange reads, and every order/cancel/write operation.
+- [x] Hand a reviewed artifact and digest only to the separate Phase 1I-1 dry
+  run, then stop before `--execute`, typed approval, or submission.
+- [ ] For every operator run, independently acquire fresh account/risk-state
+  and instrument-constraint snapshots and verify their provenance/currentness;
+  canonical hashes do not attest exchange origin.
+- [ ] Define a separately approved shared/durable risk-state checkpoint before
+  any unattended or multi-process composition; Phase 1I-2 intentionally has no
+  automatic shared risk-state persistence.
+
 ## Pre-existing quality debt
 
 These failures predate Phase 1H-1 and are not suppressed with repository-wide

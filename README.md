@@ -6,10 +6,13 @@ currently supports local recorded-market replay, deterministic strategy and
 risk decisions, canonical execution-intent construction, in-memory paper
 execution, and an explicit read-only BingX VST readiness check.
 
-Phase 1I-1 also provides a manual, two-step BingX VST Demo canary. It accepts
-only a canonical `READY` execution intent, defaults to a read-only dry run, and
-can submit at most one protected non-marketable limit order after exact digest
-and typed client-ID approval. It is not registered in the installed CLI or
+Phase 1I-2 provides a separate offline, manual preparation step that converts
+four explicit canonical inputs into a `READY` execution-intent artifact only
+after the frozen strategy, decision, risk, and intent gates approve it. Phase
+1I-1 provides the separate two-step BingX VST Demo canary. It accepts only a
+canonical `READY` execution intent, defaults to a read-only dry run, and can
+submit at most one protected non-marketable limit order after exact digest and
+typed client-ID approval. Neither tool is registered in the installed CLI or
 default runtime.
 
 It is not a live-trading application. No default runtime submits an order, and
@@ -28,7 +31,8 @@ RecordedMarketDataPayload
   -> explicit account / approved-risk / constraint / policy inputs
   -> ExecutionIntentService
   -> PaperExecutionCoordinator OR injected BingXVstCoordinator
-                          OR manual DemoOrderPlan canary
+                          OR manual offline intent preparation
+                             -> manual DemoOrderPlan canary
 ```
 
 The canonical runtime factory,
@@ -141,6 +145,112 @@ That command uses the production BingX HTTP/session path but calls only the
 public server-time endpoint. Do not run either command as part of the automated
 quality gates.
 
+## Offline VST intent preparation
+
+Phase 1I-2 is an explicit, credential-free composition root. From the repository
+root, provide four placeholder-named local files; do not put credentials or
+other secrets in them:
+
+```powershell
+(Get-FileHash -Algorithm SHA256 "<CANONICAL_MARKET_INPUT.json>").Hash.ToLowerInvariant()
+(Get-FileHash -Algorithm SHA256 "<CANONICAL_ACCOUNT_INPUT.json>").Hash.ToLowerInvariant()
+(Get-FileHash -Algorithm SHA256 "<CANONICAL_CONSTRAINTS_INPUT.json>").Hash.ToLowerInvariant()
+(Get-FileHash -Algorithm SHA256 "<CANONICAL_POLICY_INPUT.json>").Hash.ToLowerInvariant()
+```
+
+```powershell
+python scripts/bingx_vst_prepare_intent.py `
+  --market-input "<CANONICAL_MARKET_INPUT.json>" `
+  --market-digest "<MARKET_INPUT_SHA256>" `
+  --account-input "<CANONICAL_ACCOUNT_INPUT.json>" `
+  --account-digest "<ACCOUNT_INPUT_SHA256>" `
+  --constraints-input "<CANONICAL_CONSTRAINTS_INPUT.json>" `
+  --constraints-digest "<CONSTRAINTS_INPUT_SHA256>" `
+  --policy-input "<CANONICAL_POLICY_INPUT.json>" `
+  --policy-digest "<POLICY_INPUT_SHA256>"
+```
+
+Each file must already be UTF-8 canonical compact JSON: object keys sorted,
+no insignificant whitespace, finite values only, and no undeclared fields. The
+four exact top-level schemas are:
+
+- `bingx-vst-recorded-market-v1`: `schema_version`, `exchange`, `symbol`,
+  `timeframe`, and nonempty sequence-ordered `events`; every event has exactly
+  `kind`, `payload`, and `sequence`, every `kind` is `candles`, and all candle
+  payload identities and strictly increasing UTC-`Z` timestamps must match the
+  outer symbol/timeframe; Phase 1I-2 is intentionally restricted to
+  `BTC-USDT`;
+- `bingx-vst-account-v1`: `schema_version`, `observed_at`, `equity`,
+  `available_balance`, `current_exposure`, `open_position_quantity`,
+  `portfolio`, and `risk_state`; `portfolio` contains exactly `balance`,
+  `equity`, `used_margin`, `daily_loss`, `total_risk`, and `open_positions`,
+  while `risk_state` contains exactly `kill_switch_active` and
+  `circuit_breaker_consecutive_losses`;
+- `bingx-vst-constraints-v1`: `schema_version`, `exchange`, `symbol`,
+  `observed_at`, `price_tick`, `quantity_step`, `minimum_quantity`,
+  `minimum_notional`, and nullable `maximum_quantity`;
+- `bingx-vst-execution-policy-v1`: `schema_version`, `execution`, and
+  `risk_limits`; `execution` contains exactly `risk_percent`, `leverage`, and
+  `maximum_exposure_ratio`, while `risk_limits` contains exactly
+  `max_consecutive_losses`, `circuit_breaker_cooldown_minutes`, `max_drawdown`,
+  `max_positions`, `max_portfolio_risk`, `max_daily_loss`, `max_margin_usage`,
+  `max_position_size`, and `max_leverage`.
+
+Decimal values are canonical decimal strings. Account and constraint
+`observed_at` values are exact UTC timestamps ending in `Z`, and their snapshots
+and the latest candle must satisfy the existing five-minute freshness window
+(with the existing five-second future tolerance). The account file must carry
+the operator's fresh account, portfolio, and explicit kill-switch/circuit-breaker
+state; the constraints file must be a fresh operator-supplied instrument
+snapshot. Preparation requires the execution policy to evaluate the frozen risk
+pipeline at the canary's worst admitted leverage of exactly `2`; the resulting
+normalized entry notional must also be at most `10`. These local caps are
+rechecked from current VST state by the separate dry-run command. Artifact
+expiry is deterministically the final canonical candle timestamp plus the
+existing five-minute TTL; the validation clock is never serialized or hashed.
+
+On approval, the command exclusively creates
+`.operator-artifacts/<intent_id>.json` and prints one canonical compact report.
+The artifact contains only the exact canonical `ExecutionIntent` bytes. A
+`READY` report contains exactly `status`, `artifact_path`, `intent_digest`,
+`symbol`, `side`, `expires_at`, `proposal_id`, `decision_id`,
+`risk_evaluation_id`, and `reason_codes`. A blocked/no-action report has no
+artifact path or intent digest. The proposal and decision identifiers come from
+the frozen deterministic services; source-document SHA-256 digests bind the
+market, account, constraints, and policy inputs; `risk_evaluation_id` binds the
+exact frozen risk call/result and those inputs; and `intent_digest` is SHA-256
+over the exact persisted bytes. Every source digest is supplied explicitly and
+must match its file before any pipeline service runs.
+
+Verify the generated artifact independently and compare it with the
+`intent_digest` in the `READY` report:
+
+```powershell
+(Get-FileHash -Algorithm SHA256 "<READY_REPORT_ARTIFACT_PATH>").Hash.ToLowerInvariant()
+```
+
+Canonicalization and hashing prove local byte integrity, not exchange
+provenance or currentness. The account/risk-state and constraint snapshots are
+operator supplied and are not attested by BingX. There is no automatic shared
+risk-state checkpoint, persistence, or cross-process synchronization. The
+preparation command reads the four named files and writes the ignored local
+artifact only: it reads no environment or dotenv values, requests no
+credentials, performs no network call, and exposes no exchange read or write.
+
+After reviewing a `READY` report and its artifact, run only the separate Phase
+1I-1 dry-run handoff:
+
+```powershell
+python scripts/bingx_vst_demo_order.py `
+  --intent-file "<READY_REPORT_ARTIFACT_PATH>" `
+  --intent-digest "<READY_REPORT_INTENT_DIGEST>" `
+  --host https://open-api-vst.bingx.com
+```
+
+Inspect the resulting `DRY_RUN_READY` report and stop before submission. Phase
+1I-2 never supplies `--execute`, types an approval, or performs an order write;
+any later Phase 1I-1 execution remains a separate operator-controlled event.
+
 ## BingX VST Demo order canary
 
 The canary is an explicitly manual tool. Its default dry run performs
@@ -210,6 +320,7 @@ python -m mypy --follow-imports=skip --ignore-missing-imports `
   src/execution src/exchange/bingx_client.py src/execution_intent `
   src/paper_runtime src/vst_runtime `
   scripts/bingx_vst_demo_order.py `
+  scripts/bingx_vst_prepare_intent.py `
   scripts/bingx_vst_readiness.py `
   scripts/bingx_vst_transport_diagnostic.py `
   scripts/scan_repository_secrets.py
@@ -237,6 +348,8 @@ must not contact an exchange.
 - Do not add real values to test fixtures. Tests must use unmistakably fake
   constants and injected transports.
 - Readiness output is sanitized and local readiness-output files are ignored.
+- Phase 1I-2 intent artifacts are local operator material and
+  `/.operator-artifacts/` is ignored; do not commit them or any source snapshot.
 - Run the local secret scan before committing:
   `python scripts/scan_repository_secrets.py --base-ref vst-runtime-freeze-v1`.
   The stdlib/Git-only scanner checks committed additions, tracked/staged
@@ -262,6 +375,8 @@ The following are intentionally deferred:
 - automatic multi-exchange orchestration;
 - dashboard/API deployment;
 - durable paper/VST state persistence and background operation.
+- exchange-attested account/constraint input acquisition or a shared durable
+  risk-state checkpoint for offline intent preparation.
 
 The controlled progression is:
 
@@ -269,6 +384,7 @@ The controlled progression is:
 recorded replay / paper
   -> read-only VST readiness
   -> repository and deployment hardening
+  -> offline canonical intent preparation
   -> explicitly gated VST demo orders
   -> shadow operation
   -> micro-live operation

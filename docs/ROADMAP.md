@@ -19,6 +19,7 @@ capability.
 | 1H-1 - Repository truth and CI baseline | Complete | Authoritative docs, compatibility/audit inventory, security hygiene, and honest scoped CI |
 | 1H-2 - Bounded cleanup and governance | Complete | Reviewed dead/scaffold removal, obsolete network-script deletion, secret-scanning gate, and single dependency authority |
 | 1I-1 - Controlled VST Demo canary | Complete/manual | Dry-run-first immutable plan, exact operator approval, one bounded protected limit submission, client-ID query/cancel, and fail-closed reconciliation |
+| 1I-2 - Controlled intent preparation | Complete/manual | Offline four-input canonical composition through frozen strategy/decision/risk/intent gates to a `READY`-only local artifact |
 
 The independently frozen risk, execution, and exchange libraries are marked by
 `risk-freeze-v1`, `execution-freeze-v1`, and `exchange-freeze-v1`.
@@ -80,13 +81,31 @@ Phase 1H plus deployment controls:
 
 ### Stage D - VST demo orders
 
-Implemented only as the Phase 1I-1 manual canary. It is a separate composition
-root, not an installed/default runtime mode, and it does not reuse the
-readiness adapter for writes. The tool defaults to dry run and requires a
-canonical `READY` intent, current exchange/account prerequisites, a fixed
-conservative notional/leverage policy, the exact rebuilt plan digest, and typed
-client-ID confirmation. One protected non-marketable limit may be submitted;
-blind retry, pyramiding, automatic recovery orders, and Live hosts are blocked.
+Phase 1I-2 first provides a separate offline manual preparation root. Four
+explicit canonical compact documents supply recorded market events, a fresh
+account/portfolio/risk-state snapshot, fresh instrument constraints, and the
+execution/risk policy. The boundary runs the frozen strategy, decision, risk,
+and execution-intent services and writes an ignored local artifact only for a
+`READY` intent. Its source digests, proposal/decision IDs, exact risk-evaluation
+digest, and final intent digest bind the local inputs and result. They do not
+provide exchange provenance or guarantee currentness: the snapshots are
+operator supplied, and there is no automatic shared risk-state checkpoint.
+Risk is evaluated at the fixed worst admitted `2x` leverage, and a normalized
+entry above the `10` notional ceiling is blocked before artifact creation.
+
+The preparation command uses no credentials, environment configuration,
+network, or exchange operation. Its authorized handoff is the Phase 1I-1 dry
+run, followed by operator inspection and a stop before submission. It cannot
+invoke `--execute` or submit an order.
+
+Phase 1I-1 remains the separate manual canary. It is not an installed/default
+runtime mode and does not reuse the readiness adapter for writes. The tool
+defaults to dry run and requires a canonical `READY` intent, current
+exchange/account prerequisites, a fixed conservative notional/leverage policy,
+the exact rebuilt plan digest, and typed client-ID confirmation. One protected
+non-marketable limit may be submitted only in the separately invoked Phase
+1I-1 execution flow; blind retry, pyramiding, automatic recovery orders, and
+Live hosts are blocked.
 
 Operational execution remains a human-controlled event. Least-privilege VST
 credential issuance, operator identity, incident ownership, and retention of
