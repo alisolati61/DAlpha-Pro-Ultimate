@@ -6,13 +6,13 @@ currently supports local recorded-market replay, deterministic strategy and
 risk decisions, canonical execution-intent construction, in-memory paper
 execution, and an explicit read-only BingX VST readiness check.
 
-Phase 1I-2 provides a separate offline, manual preparation step that converts
-four explicit canonical inputs into a `READY` execution-intent artifact only
-after the frozen strategy, decision, risk, and intent gates approve it. Phase
-1I-1 provides the separate two-step BingX VST Demo canary. It accepts only a
-canonical `READY` execution intent, defaults to a read-only dry run, and can
-submit at most one protected non-marketable limit order after exact digest and
-typed client-ID approval. Neither tool is registered in the installed CLI or
+Phase 1I-3 provides a manual VST-only acquisition step that obtains the four
+canonical Phase 1I-2 inputs from bounded read-only BingX responses and a fixed
+repository policy. Phase 1I-2 converts those inputs into a `READY`
+execution-intent artifact only after the frozen strategy, decision, risk, and
+intent gates approve it. Phase 1I-1 provides the separate BingX VST Demo
+canary. It accepts only a canonical `READY` execution intent and defaults to a
+read-only dry run. None of these tools is registered in the installed CLI or
 default runtime.
 
 It is not a live-trading application. No default runtime submits an order, and
@@ -31,8 +31,12 @@ RecordedMarketDataPayload
   -> explicit account / approved-risk / constraint / policy inputs
   -> ExecutionIntentService
   -> PaperExecutionCoordinator OR injected BingXVstCoordinator
-                          OR manual offline intent preparation
-                             -> manual DemoOrderPlan canary
+
+manual VST read-only input capture
+  -> recorded market/account/constraint/policy inputs
+  -> manual offline intent preparation
+  -> manual DemoOrderPlan dry run
+  -> stop
 ```
 
 The canonical runtime factory,
@@ -145,6 +149,79 @@ That command uses the production BingX HTTP/session path but calls only the
 public server-time endpoint. Do not run either command as part of the automated
 quality gates.
 
+## Attested VST canary input capture
+
+Phase 1I-3 replaces hand-authored exchange/account facts with one explicit
+manual read-only capture. Run it only from the repository root and only against
+the allowlisted BingX VST host:
+
+```powershell
+python scripts/bingx_vst_capture_canary_inputs.py `
+  --host https://open-api-vst.bingx.com
+```
+
+The API key and secret are both requested invisibly with `getpass`. The command
+accepts no credential, symbol, policy, output-directory, order, or account-
+mutation flag and reads no environment or dotenv configuration. It rejects a
+production host before prompting or composing a client, invokes existing VST
+readiness first, and closes both the readiness client and acquisition client on
+every path.
+
+After readiness, the narrow capture adapter can reach only these read paths:
+
+- completed `BTC-USDT` one-minute klines and the current order book;
+- account balance/equity/available-margin/used-margin fields, all positions,
+  and UTC-day fund-flow history;
+- contract precision/minimums, current leverage, position mode, and current
+  `BTC-USDT` open orders.
+
+It exposes no submit, cancel, leverage/margin/mode mutation, transfer,
+withdrawal, close-position, or Live operation. Candles must be complete,
+unique, consecutive, fresh, and replay-compatible. Any active position,
+nonzero unexplained used margin, same-symbol open order, incompatible contract
+minimum, leverage above `2`, invalid position mode, incomplete account schema,
+or saturated/incomplete income history blocks capture.
+
+The UTC-day daily-loss input is a conservative ratio of gross negative trading
+fund flows to current equity: positive flows do not offset losses and transfer
+or trial-fund movements are not treated as trading loss. Consecutive losses are
+derived from ordered `REALIZED_PNL` records. Portfolio risk is zero only after
+the all-position read proves there is no active position. Capture also requires
+the existing process-local `KillSwitch` service to be present and inactive;
+missing or active local state blocks before readiness or any other read. This
+session-local state is authoritative only for the manual capture process, and
+Phase 1I-3 does not claim durable cross-process kill-switch attestation.
+
+A successful capture writes, without overwrite, only below:
+
+```text
+.operator-artifacts/canary-inputs/<CAPTURE_ID>/
+  account-input.json
+  constraints-input.json
+  manifest.json
+  market-input.json
+  policy-input.json
+```
+
+`manifest.json` binds the actual allowlisted VST host, capture/expiry times,
+readiness digest, all four input-file SHA-256 digests, the validated order-book
+attestation, account/risk-source attestation, contract/leverage/mode
+attestation, and fixed canary policy ID. It contains no credentials, headers,
+signed query strings, or account totals. The fixed policy is versioned and
+enforces `BTC-USDT`, protected `LIMIT` execution, quote notional at most `10`,
+leverage at most `2`, no pyramiding, no existing position, and a five-minute
+TTL. There is no CLI control that can weaken it.
+
+The exact three-step rehearsal is:
+
+1. Run the capture command above and copy its generated preparation command.
+2. Run that generated command and continue only if its status is `READY`.
+3. Run the printed Demo-order command without `--execute`, inspect
+   `DRY_RUN_READY`, and stop.
+
+Capture and preparation never invoke the next step automatically, and this
+Phase 1I-3 workflow does not authorize a submission.
+
 ## Offline VST intent preparation
 
 Phase 1I-2 is an explicit, credential-free composition root. From the repository
@@ -229,13 +306,15 @@ Verify the generated artifact independently and compare it with the
 (Get-FileHash -Algorithm SHA256 "<READY_REPORT_ARTIFACT_PATH>").Hash.ToLowerInvariant()
 ```
 
-Canonicalization and hashing prove local byte integrity, not exchange
-provenance or currentness. The account/risk-state and constraint snapshots are
-operator supplied and are not attested by BingX. There is no automatic shared
-risk-state checkpoint, persistence, or cross-process synchronization. The
-preparation command reads the four named files and writes the ignored local
-artifact only: it reads no environment or dotenv values, requests no
-credentials, performs no network call, and exposes no exchange read or write.
+Canonicalization and hashing prove local byte integrity, not provenance by
+themselves. Inputs supplied directly to Phase 1I-2 remain operator supplied;
+the Phase 1I-3 path instead captures the available exchange facts through the
+bounded VST reads above and records their attestations. There is still no
+automatic shared risk-state checkpoint, persistence, or cross-process
+synchronization. The preparation command reads the four named files and writes
+the ignored local artifact only: it reads no environment or dotenv values,
+requests no credentials, performs no network call, and exposes no exchange
+read or write.
 
 After reviewing a `READY` report and its artifact, run only the separate Phase
 1I-1 dry-run handoff:
@@ -319,6 +398,7 @@ python -m mypy --follow-imports=skip --ignore-missing-imports `
   src/decision/recorded.py src/decision/replay.py src/strategy src/risk `
   src/execution src/exchange/bingx_client.py src/execution_intent `
   src/paper_runtime src/vst_runtime `
+  scripts/bingx_vst_capture_canary_inputs.py `
   scripts/bingx_vst_demo_order.py `
   scripts/bingx_vst_prepare_intent.py `
   scripts/bingx_vst_readiness.py `

@@ -55,6 +55,7 @@ jobs:
           src/decision/replay.py src/strategy src/risk src/execution
           src/exchange/bingx_client.py src/execution_intent
           src/paper_runtime src/vst_runtime
+          scripts/bingx_vst_capture_canary_inputs.py
           scripts/bingx_vst_demo_order.py
           scripts/bingx_vst_prepare_intent.py
           scripts/bingx_vst_readiness.py

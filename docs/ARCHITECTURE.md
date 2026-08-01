@@ -1,10 +1,10 @@
 # Architecture
 
 This document describes the code that is actually composed and tested through
-the manual Phase 1I-2 intent-preparation and Phase 1I-1 VST Demo canary
-boundaries. Frozen Phase 1G contracts remain at the `vst-runtime-freeze-v1`
-baseline. Historical and scaffold modules are not promoted to production
-status.
+the manual Phase 1I-3 read-only capture, Phase 1I-2 intent-preparation, and
+Phase 1I-1 VST Demo canary boundaries. Frozen Phase 1G contracts remain at the
+`vst-runtime-freeze-v1` baseline. Historical and scaffold modules are not
+promoted to production status.
 
 ## Runtime entry points
 
@@ -16,6 +16,7 @@ status.
 | `src.core.kernel.bootstrap.bootstrap()` | Compatibility-only | Returns an initialized `Kernel` |
 | `scripts/bingx_vst_readiness.py` | Explicit manual tool | Read-only VST readiness with hidden credentials |
 | `scripts/bingx_vst_transport_diagnostic.py` | Explicit manual tool | Public server-time transport diagnosis only |
+| `scripts/bingx_vst_capture_canary_inputs.py` | Explicit manual read-only tool | VST-attested market/account/constraint capture plus fixed canonical canary policy |
 | `scripts/bingx_vst_prepare_intent.py` | Explicit manual offline tool | Four canonical local inputs to a `READY` intent artifact; no credentials, environment, or network |
 | `scripts/bingx_vst_demo_order.py` | Explicit manual tool | Dry-run-first, one-order VST Demo canary with two-step approval |
 
@@ -54,8 +55,9 @@ registration order as its tie-breaker. Initialization and startup are
 dependency-first; owned services stop in reverse order.
 
 `RiskOrchestrator` is injected into `DecisionService`; it is not a lifecycle
-service. `RecordedDecisionCoordinator`, offline intent preparation, and VST
-readiness are also explicit orchestration boundaries rather than graph nodes.
+service. `RecordedDecisionCoordinator`, read-only canary capture, offline intent
+preparation, and VST readiness are also explicit orchestration boundaries
+rather than graph nodes.
 
 ## Deterministic recorded pipeline
 
@@ -101,7 +103,62 @@ intents; incompatible or unsafe input produces a blocked intent.
 An intent with `IntentStatus.READY` may be passed explicitly to one execution
 branch. Nothing in the default runtime performs that handoff automatically.
 
-### 4. Offline manual intent preparation
+### 4. Attested manual VST input capture
+
+`src.vst_runtime.canary_capture.capture_canary_inputs()` is an async-native,
+manual-only Phase 1I-3 composition root. The CLI validates an allowlisted VST
+host before hidden credential prompts and uses exactly one `asyncio.run` at its
+top-level boundary. It first runs the existing `check_vst_readiness()` with its
+own client. Only a successful readiness result permits construction of a
+second, pinned read-only acquisition client; both clients close on all paths.
+
+`BingXAsyncCanaryCaptureAdapter` is a composition facade over the frozen
+`BingXHttpClient` and existing Demo read mappings. Its public protocol contains
+only candle, order-book, strict balance, all-position, contract, leverage,
+position-mode, open-order, and fund-flow reads plus `close` and the selected
+host. It does not inherit or expose the Demo transport's submit/cancel methods.
+The two additional strict mappings use the documented authenticated GET paths
+`/openApi/swap/v3/user/balance` and `/openApi/swap/v2/user/income`; signing,
+headers, timeout, URL construction, fallback behavior, response validation,
+and error translation remain owned by `BingXHttpClient`.
+
+The capture boundary validates complete, unique, consecutive one-minute
+`BTC-USDT` candles and emits their ascending completed subset in the exact
+Phase 1I-2 replay schema. The current top of book is validated and bound into
+the manifest rather than added to the frozen candle-only preparation schema;
+Phase 1I-1 independently re-reads the book when it builds its non-marketable
+plan.
+
+The account mapping requires authoritative balance, equity, available-margin,
+used-margin, position, and UTC-day fund-flow fields. Any active position,
+same-symbol open order, nonzero unexplained used margin, incomplete response,
+or full 1,000-record income window fails closed. Gross negative non-transfer,
+non-trial-fund flows divided by current equity form a conservative daily-loss
+ratio; ordered realized-PnL records produce the consecutive-loss count.
+Positive flows do not erase loss. Total portfolio risk becomes zero only after
+the all-position response proves there is no active position. The boundary
+requires an existing process-local `KillSwitch` service and fails before
+readiness if it is missing or active. The CLI composes that service for its
+fresh manual session; this is not a durable or cross-process risk-state
+attestation.
+
+Contract precision, quantity step, tick, minimum quantity/notional, current
+long/short leverage, position mode, trading state, and open-order absence are
+validated without mutating any account setting. The exchange does not supply a
+maximum quantity through the reused contract mapping, so the canonical
+constraint field remains `null`; the later frozen preparation and dry-run caps
+remain authoritative. Exchange minimums that cannot fit beneath quote notional
+`10` block capture.
+
+The fixed `bingx-vst-execution-policy-v1` bytes are generated inside the
+boundary. They are not accepted from the CLI. The manifest binds all four file
+digests, readiness result, actual VST host, validated book, account/risk source,
+contract/leverage/mode source, and the versioned Phase 1I canary policy ID.
+Files are written transactionally and exclusively under
+`.operator-artifacts/canary-inputs/<capture_id>/`; conflict, symlink, path, or
+cleanup uncertainty blocks the operation.
+
+### 5. Offline manual intent preparation
 
 `src.vst_runtime.intent_preparation.prepare_demo_canary_intent()` is a narrow
 Phase 1I-2 composition root over the existing frozen services. It accepts four

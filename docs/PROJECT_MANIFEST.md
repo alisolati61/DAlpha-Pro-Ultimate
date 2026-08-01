@@ -1,7 +1,8 @@
 # Project Manifest
 
 This manifest is the status index for the repository through the bounded
-manual Phase 1I-2 intent-preparation and Phase 1I-1 Demo canary boundaries.
+manual Phase 1I-3 read-only capture, Phase 1I-2 intent-preparation, and Phase
+1I-1 Demo canary boundaries.
 Phase 1G runtime/readiness contracts remain frozen at `vst-runtime-freeze-v1`;
 Phase 1I-1 narrowly hardened missing-position data rejection and corrected host
 advancement so only network/timeout failures move `.com` reads to `.pro`.
@@ -65,6 +66,7 @@ it becomes an operational blocker.
 | VST runtime | `src.vst_runtime` | Protocol-driven synchronous VST coordinator and reconciliation |
 | VST readiness | `src.vst_runtime.readiness`, `scripts/bingx_vst_readiness.py` | Async read-only server-time, balance, and positions validation |
 | Public VST diagnosis | `scripts/bingx_vst_transport_diagnostic.py` | Credential-free server-time transport classification |
+| Manual VST canary capture | `src.vst_runtime.canary_capture`, `scripts/bingx_vst_capture_canary_inputs.py` | Readiness-first, read-only market/account/contract acquisition and fixed-policy canonical input manifest |
 | Manual intent preparation | `src.vst_runtime.intent_preparation`, `scripts/bingx_vst_prepare_intent.py` | Offline four-input composition through frozen strategy/decision/risk/intent gates to a `READY`-only ignored artifact |
 | Manual VST Demo canary | `src.vst_runtime.demo_order`, `src.vst_runtime.demo_transport`, `scripts/bingx_vst_demo_order.py` | Canonical dry-run plan and exactly gated one-order submit/query/cancel/reconcile lifecycle |
 | Repository security | `scripts/scan_repository_secrets.py` | Deterministic value-redacting scan of committed and current repository content |
@@ -83,16 +85,18 @@ RecordedMarketDataPayload
   -> explicit account + approved-risk + constraints + policy
   -> ExecutionIntent
   -> paper coordinator OR explicitly injected VST coordinator
-                     OR Phase 1I-2 READY-only local artifact
+                     OR Phase 1I-3 read-only canonical input capture
+                        -> Phase 1I-2 READY-only local artifact
                         -> Phase 1I-1 manual async VST Demo dry run
 ```
 
 There is no default-runtime risk-snapshot producer and no automatic
-paper-to-VST switch. Phase 1I-2 can derive an approved-risk snapshot only after
-one explicit frozen risk evaluation over four operator-supplied canonical
-documents. A caller must still supply and compose each boundary explicitly.
-The account/risk-state and constraint documents are not exchange-attested, and
-there is no automatic shared or durable risk-state checkpoint.
+paper-to-VST switch. Phase 1I-3 can acquire the available market, balance,
+margin, position, income, contract, leverage, mode, and open-order facts through
+bounded VST GET requests and generate the fixed policy. Phase 1I-2 derives an
+approved-risk snapshot only after one explicit frozen risk evaluation over the
+four canonical documents. A caller must still invoke and inspect each boundary
+explicitly. There is no automatic shared or durable risk-state checkpoint.
 
 ## Compatibility and parallel surfaces
 
@@ -121,6 +125,11 @@ No compatibility module is silently aliased to a canonical contract.
 - read-only BingX VST readiness with bounded clock sampling;
 - sanitized transport diagnostics and deterministic host fallback;
 - fake-only automated VST tests;
+- readiness-first, getpass-only Phase 1I-3 input capture through a public
+  read-only adapter, with completed-candle replay validation, conservative
+  fund-flow loss derivation, all-position/open-order blockers, fixed policy,
+  source-attestation manifest, exclusive ignored-directory output, and no
+  exchange mutation reachability;
 - offline, credential-free Phase 1I-2 preparation with strict canonical
   market/account/constraint/policy schemas, supplied source-digest verification,
   freshness checks, source and risk provenance digests, fixed `2x` risk
@@ -137,9 +146,11 @@ No compatibility module is silently aliased to a canonical contract.
 ## Not implemented or not deployment-ready
 
 - automatic, unattended, or default-runtime VST Demo submission;
-- exchange-attested acquisition/currentness for Phase 1I-2 account,
-  risk-state, and instrument-constraint inputs;
 - automatic shared/durable risk-state checkpointing across preparation runs;
+- durable cross-process attestation of the standalone capture session's local
+  kill-switch state;
+- automatic acquisition-to-preparation-to-dry-run orchestration (each command
+  remains an explicit operator step);
 - shadow-mode orchestration;
 - micro-live or unrestricted live operation;
 - MT5;

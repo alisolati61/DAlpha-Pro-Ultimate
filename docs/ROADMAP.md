@@ -20,6 +20,7 @@ capability.
 | 1H-2 - Bounded cleanup and governance | Complete | Reviewed dead/scaffold removal, obsolete network-script deletion, secret-scanning gate, and single dependency authority |
 | 1I-1 - Controlled VST Demo canary | Complete/manual | Dry-run-first immutable plan, exact operator approval, one bounded protected limit submission, client-ID query/cancel, and fail-closed reconciliation |
 | 1I-2 - Controlled intent preparation | Complete/manual | Offline four-input canonical composition through frozen strategy/decision/risk/intent gates to a `READY`-only local artifact |
+| 1I-3 - Attested canary capture/rehearsal | Complete/manual read-only | VST readiness followed by bounded market/account/contract acquisition, fixed policy generation, canonical input manifest, and an explicitly separate dry-run-only handoff |
 
 The independently frozen risk, execution, and exchange libraries are marked by
 `risk-freeze-v1`, `execution-freeze-v1`, and `exchange-freeze-v1`.
@@ -81,22 +82,42 @@ Phase 1H plus deployment controls:
 
 ### Stage D - VST demo orders
 
-Phase 1I-2 first provides a separate offline manual preparation root. Four
-explicit canonical compact documents supply recorded market events, a fresh
-account/portfolio/risk-state snapshot, fresh instrument constraints, and the
-execution/risk policy. The boundary runs the frozen strategy, decision, risk,
-and execution-intent services and writes an ignored local artifact only for a
+Phase 1I-3 first provides the manual read-only acquisition root needed before
+Phase 1I-2. Existing readiness must pass before the command reads complete
+one-minute `BTC-USDT` candles, the order book, strict balance/margin fields,
+all positions, UTC-day fund flow, contract constraints, leverage, position
+mode, and open orders. It writes four canonical inputs and one manifest only
+under the ignored operator-artifact root. The manifest binds the actual VST
+host, readiness result, all input-file digests, book/account/constraint source
+attestations, capture TTL, and the fixed versioned Demo policy. Production
+hosts, incomplete risk history, active positions, unexplained used margin,
+open entry orders, unsafe leverage/mode, incompatible minimums, stale candles,
+and any write or setting mutation fail closed.
+
+Daily loss is conservatively derived from gross negative current-day trading
+fund flows relative to equity, and consecutive losses come from ordered
+realized-PnL records; empty values are accepted only when the authoritative
+bounded responses are genuinely empty. Total portfolio risk is zero only when
+the all-position read proves no active position. Capture requires an existing,
+inactive process-local kill-switch service and blocks before exchange reads if
+that source is absent or active. Durable cross-process kill-switch attestation
+remains explicitly unsolved.
+
+Phase 1I-2 remains the separate offline preparation root. The four captured
+canonical documents supply recorded market events, a fresh account/portfolio/
+risk-state snapshot, fresh instrument constraints, and the fixed execution/risk
+policy. The boundary runs the frozen strategy, decision, risk, and
+execution-intent services and writes an ignored local artifact only for a
 `READY` intent. Its source digests, proposal/decision IDs, exact risk-evaluation
-digest, and final intent digest bind the local inputs and result. They do not
-provide exchange provenance or guarantee currentness: the snapshots are
-operator supplied, and there is no automatic shared risk-state checkpoint.
-Risk is evaluated at the fixed worst admitted `2x` leverage, and a normalized
-entry above the `10` notional ceiling is blocked before artifact creation.
+digest, and final intent digest bind the inputs and result. Risk is evaluated
+at the fixed worst admitted `2x` leverage, and a normalized entry above the
+`10` notional ceiling is blocked before artifact creation.
 
 The preparation command uses no credentials, environment configuration,
-network, or exchange operation. Its authorized handoff is the Phase 1I-1 dry
-run, followed by operator inspection and a stop before submission. It cannot
-invoke `--execute` or submit an order.
+network, or exchange operation. The exact Phase 1I-3 rehearsal is capture,
+preparation, then the Phase 1I-1 dry run without `--execute`, followed by
+operator inspection of `DRY_RUN_READY` and a mandatory stop. No phase command
+automatically invokes the next one.
 
 Phase 1I-1 remains the separate manual canary. It is not an installed/default
 runtime mode and does not reuse the readiness adapter for writes. The tool

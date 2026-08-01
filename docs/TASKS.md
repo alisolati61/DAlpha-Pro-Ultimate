@@ -97,12 +97,47 @@ not be used to bypass subsystem freeze rules.
   network calls, exchange reads, and every order/cancel/write operation.
 - [x] Hand a reviewed artifact and digest only to the separate Phase 1I-1 dry
   run, then stop before `--execute`, typed approval, or submission.
-- [ ] For every operator run, independently acquire fresh account/risk-state
-  and instrument-constraint snapshots and verify their provenance/currentness;
-  canonical hashes do not attest exchange origin.
+- [x] Add a separate Phase 1I-3 read-only acquisition path for fresh BingX
+  market/account/constraint facts and a fixed policy; canonical hashes alone
+  still do not attest directly supplied Phase 1I-2 input.
 - [ ] Define a separately approved shared/durable risk-state checkpoint before
   any unattended or multi-process composition; Phase 1I-2 intentionally has no
   automatic shared risk-state persistence.
+
+## Phase 1I-3 - Attested read-only canary capture and dry-run rehearsal
+
+- [x] Add a separate manual VST-only CLI that rejects production hosts before
+  hidden credential prompts and runs existing readiness before every other
+  read.
+- [x] Reuse the frozen `BingXHttpClient` signing, headers, timeout, URL,
+  fallback, response, and error path behind a composition-only adapter exposing
+  candle, book, strict balance, position, contract, leverage, mode, open-order,
+  income, selected-host, and close operations only.
+- [x] Validate complete, unique, consecutive, fresh `BTC-USDT` one-minute
+  candles and bind the current validated top of book without changing the
+  frozen candle-only preparation schema.
+- [x] Derive balance, equity, available/used margin, position exposure,
+  conservative UTC-day gross loss, consecutive realized losses, and zero
+  portfolio risk only from complete authoritative reads; fail on absent or
+  saturated facts instead of inventing values.
+- [x] Block active positions, open same-symbol entry orders, unexplained used
+  margin, unsafe leverage, invalid position mode, disabled/incompatible
+  contracts, stale data, production/Live identity, and every account mutation.
+- [x] Generate the deterministic versioned policy internally with fixed
+  `BTC-USDT`, protected `LIMIT`, `10` quote-notional, `2x` leverage,
+  no-pyramiding, no-position, and five-minute-TTL requirements; expose no CLI
+  policy override.
+- [x] Write four canonical files and a source-attestation manifest exclusively
+  under `.operator-artifacts/canary-inputs/<capture_id>/`, with no overwrite,
+  symlink/path escape, residual temporary file, credential, or console balance.
+- [x] Print exact preparation and dry-run-without-`--execute` handoff commands;
+  do not invoke either command automatically and stop after `DRY_RUN_READY`.
+- [x] Keep automated capture/preparation/Demo rehearsal fake-only and prove
+  lifecycle closure, import safety, deterministic bytes/digests, narrow reads,
+  and zero exchange write reachability.
+- [ ] Add an approved durable local risk-state authority before treating a
+  standalone fresh capture's inactive kill-switch state as valid across
+  processes or prior operator sessions.
 
 ## Pre-existing quality debt
 
