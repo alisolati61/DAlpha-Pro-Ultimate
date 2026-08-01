@@ -305,10 +305,11 @@ class BingXHttpClient:
 
         attempts = 1 + (self.max_retries if retry_safe else 0)
         last_error: ExchangeError | None = None
+        fallback_index = 0
 
         for attempt_index in range(attempts):
             await self._rate_limiter.acquire(weight)
-            base_url = self._base_urls[min(attempt_index, len(self._base_urls) - 1)]
+            base_url = self._base_urls[fallback_index]
             self.last_attempted_base_url = base_url
             url = self._build_url(
                 base_url,
@@ -356,6 +357,10 @@ class BingXHttpClient:
                 if attempt_index + 1 >= attempts:
                     raise last_error from exc
 
+                fallback_index = min(
+                    fallback_index + 1,
+                    len(self._base_urls) - 1,
+                )
                 await self._sleep(self._retry_delay(attempt_index, last_error))
             except httpx.TransportError as exc:
                 operation = f"{normalized_method} {normalized_endpoint}"
@@ -370,6 +375,10 @@ class BingXHttpClient:
                 if attempt_index + 1 >= attempts:
                     raise last_error from exc
 
+                fallback_index = min(
+                    fallback_index + 1,
+                    len(self._base_urls) - 1,
+                )
                 await self._sleep(self._retry_delay(attempt_index, last_error))
 
         assert last_error is not None
@@ -733,6 +742,12 @@ class BingXHttpClient:
             params=params,
             signed=True,
         )
+        if "data" not in response:
+            raise ExchangeError(
+                message="BingX position response is missing data.",
+                exchange="bingx",
+                operation="parse_positions",
+            )
         positions: list[BingXPosition] = []
 
         for item in self._sequence_data(response):

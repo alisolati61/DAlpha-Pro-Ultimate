@@ -53,7 +53,9 @@ jobs:
           main.py src/cli.py src/core src/data
           src/decision/__init__.py src/decision/recorded.py
           src/decision/replay.py src/strategy src/risk src/execution
-          src/execution_intent src/paper_runtime src/vst_runtime
+          src/exchange/bingx_client.py src/execution_intent
+          src/paper_runtime src/vst_runtime
+          scripts/bingx_vst_demo_order.py
           scripts/bingx_vst_readiness.py
           scripts/bingx_vst_transport_diagnostic.py
           scripts/scan_repository_secrets.py

@@ -6,6 +6,12 @@ currently supports local recorded-market replay, deterministic strategy and
 risk decisions, canonical execution-intent construction, in-memory paper
 execution, and an explicit read-only BingX VST readiness check.
 
+Phase 1I-1 also provides a manual, two-step BingX VST Demo canary. It accepts
+only a canonical `READY` execution intent, defaults to a read-only dry run, and
+can submit at most one protected non-marketable limit order after exact digest
+and typed client-ID approval. It is not registered in the installed CLI or
+default runtime.
+
 It is not a live-trading application. No default runtime submits an order, and
 the installed CLI exposes local diagnostics only.
 
@@ -22,6 +28,7 @@ RecordedMarketDataPayload
   -> explicit account / approved-risk / constraint / policy inputs
   -> ExecutionIntentService
   -> PaperExecutionCoordinator OR injected BingXVstCoordinator
+                          OR manual DemoOrderPlan canary
 ```
 
 The canonical runtime factory,
@@ -134,6 +141,58 @@ That command uses the production BingX HTTP/session path but calls only the
 public server-time endpoint. Do not run either command as part of the automated
 quality gates.
 
+## BingX VST Demo order canary
+
+The canary is an explicitly manual tool. Its default dry run performs
+readiness and authoritative contract, order-book, account, leverage, position,
+and order-history reads, but no exchange write:
+
+```powershell
+python scripts/bingx_vst_demo_order.py `
+  --intent-file "<CANONICAL_READY_INTENT.json>" `
+  --intent-digest "<INTENT_SHA256>" `
+  --host https://open-api-vst.bingx.com
+```
+
+After reviewing the canonical `DRY_RUN_READY` report, execution requires the
+newly rebuilt plan to have the exact approved digest:
+
+```powershell
+python scripts/bingx_vst_demo_order.py `
+  --intent-file "<CANONICAL_READY_INTENT.json>" `
+  --intent-digest "<INTENT_SHA256>" `
+  --host https://open-api-vst.bingx.com `
+  --execute `
+  --plan-digest "<DRY_RUN_PLAN_DIGEST>"
+```
+
+The operator must then type the displayed `SUBMIT <CLIENT_ORDER_ID>` text
+exactly. Both credentials are collected with `getpass`; neither command accepts
+credential flags or loads environment/dotenv values. The safe sequence is:
+
+1. obtain a canonical `READY` intent through the approved decision, frozen-risk,
+   and execution-intent pipeline;
+2. run dry mode and inspect the symbol, exact normalized fields, VST host,
+   bounds, expiration, client ID, and plan digest;
+3. independently confirm that the account has no same-symbol position and that
+   leverage is already within the canary cap;
+4. rerun with `--execute` and the reviewed digest, then type the exact client-ID
+   confirmation;
+5. inspect the final query/cancel/reconciliation report.
+
+The write is one protected `LIMIT` submission with automatic write retries
+disabled. Immediately before that write, the tool repeats the deterministic
+client-ID absence check and revalidates constraints, the latest book,
+same-symbol positions, leverage, position mode, and open entry orders. It then
+queries by client ID, cancels once if still open, queries again, and reconciles
+current state. An ambiguous submit,
+including an unusable successful response, is resolved only by client-ID query
+and is never blindly resubmitted. Any partial or full fill activates the
+report's fail-closed kill-switch state and requires manual account inspection;
+the tool never auto-flattens. Do not rerun after an ambiguous or unexpected-fill
+report until the VST account has been reconciled. Live hosts and Live trading
+remain unsupported.
+
 ## Tests and quality gates
 
 The local equivalents of the blocking CI baseline are:
@@ -148,7 +207,9 @@ python -m ruff check $ruffFiles
 python -m mypy --follow-imports=skip --ignore-missing-imports `
   main.py src/cli.py src/core src/data src/decision/__init__.py `
   src/decision/recorded.py src/decision/replay.py src/strategy src/risk `
-  src/execution src/execution_intent src/paper_runtime src/vst_runtime `
+  src/execution src/exchange/bingx_client.py src/execution_intent `
+  src/paper_runtime src/vst_runtime `
+  scripts/bingx_vst_demo_order.py `
   scripts/bingx_vst_readiness.py `
   scripts/bingx_vst_transport_diagnostic.py `
   scripts/scan_repository_secrets.py
@@ -193,7 +254,7 @@ set removed in Phase 1H-2 and the compatibility boundaries that remain.
 
 The following are intentionally deferred:
 
-- demo-order deployment composition;
+- automatic or unattended demo-order deployment;
 - shadow and micro-live operation;
 - unrestricted live trading;
 - MT5 integration;

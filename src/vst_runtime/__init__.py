@@ -1,6 +1,29 @@
 """Public controlled BingX VST execution boundary."""
 
 from .coordinator import VST_SERVICE_ID, BingXVstCoordinator
+from .demo_order import (
+    AsyncDemoOrderTransport,
+    DemoAmbiguousSubmission,
+    DemoCanaryError,
+    DemoCanaryPolicy,
+    DemoContractConstraints,
+    DemoLeverageSnapshot,
+    DemoOrderPlan,
+    DemoOrderReport,
+    DemoOrderStatus,
+    DemoTopOfBook,
+    blocked_report,
+    build_demo_order_plan,
+    deterministic_client_order_id,
+    dry_run_report,
+    execute_demo_order_plan,
+    failed_report,
+    load_canonical_ready_intent,
+)
+from .demo_transport import (
+    BingXAsyncDemoOrderAdapter,
+    create_async_demo_order_transport,
+)
 from .errors import (
     VstAmbiguousOutcome,
     VstAuthenticationError,
@@ -39,6 +62,17 @@ from .transport import VstTransport, signing_string
 
 __all__ = (
     "BingXVstCoordinator",
+    "AsyncDemoOrderTransport",
+    "BingXAsyncDemoOrderAdapter",
+    "DemoAmbiguousSubmission",
+    "DemoCanaryError",
+    "DemoCanaryPolicy",
+    "DemoContractConstraints",
+    "DemoLeverageSnapshot",
+    "DemoOrderPlan",
+    "DemoOrderReport",
+    "DemoOrderStatus",
+    "DemoTopOfBook",
     "VST_SERVICE_ID",
     "VstReconciler",
     "VstTransport",
@@ -70,4 +104,12 @@ __all__ = (
     "AsyncReadinessTransport",
     "BingXAsyncReadinessAdapter",
     "create_async_readiness_transport",
+    "blocked_report",
+    "build_demo_order_plan",
+    "create_async_demo_order_transport",
+    "deterministic_client_order_id",
+    "dry_run_report",
+    "execute_demo_order_plan",
+    "failed_report",
+    "load_canonical_ready_intent",
 )

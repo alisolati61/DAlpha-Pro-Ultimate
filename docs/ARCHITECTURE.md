@@ -1,8 +1,9 @@
 # Architecture
 
-This document describes the code that is actually composed and tested at the
-`vst-runtime-freeze-v1` baseline. It does not promote historical or scaffold
-modules to production status.
+This document describes the code that is actually composed and tested through
+the manual Phase 1I-1 VST Demo canary. Frozen Phase 1G contracts remain at the
+`vst-runtime-freeze-v1` baseline. Historical and scaffold modules are not
+promoted to production status.
 
 ## Runtime entry points
 
@@ -14,6 +15,7 @@ modules to production status.
 | `src.core.kernel.bootstrap.bootstrap()` | Compatibility-only | Returns an initialized `Kernel` |
 | `scripts/bingx_vst_readiness.py` | Explicit manual tool | Read-only VST readiness with hidden credentials |
 | `scripts/bingx_vst_transport_diagnostic.py` | Explicit manual tool | Public server-time transport diagnosis only |
+| `scripts/bingx_vst_demo_order.py` | Explicit manual tool | Dry-run-first, one-order VST Demo canary with two-step approval |
 
 `build_runtime()` does not discover, register, start, or connect exchange
 services implicitly. `RuntimeMode.DOCTOR` is the only CLI mode.
@@ -119,7 +121,7 @@ compatibility surface, not the Phase 1F coordinator.
 `BingXVstCoordinator` consumes an injected synchronous `VstTransport`. Its
 frozen protocol contains execution and reconciliation operations, but no
 concrete deployment transport is registered by the runtime or CLI. Therefore,
-demo order submission is not an available user command at this baseline.
+the frozen coordinator remains injection-only and unchanged.
 
 ### Async read-only readiness
 
@@ -149,6 +151,105 @@ Automated tests inject async fakes and never contact BingX.
 The separate public diagnostic uses the same client/session/SSL/proxy route as
 production but invokes only the v2 server-time endpoint and requires no
 credentials.
+
+### Async manual Demo canary
+
+Phase 1I-1 adds a separate async-native composition boundary because the frozen
+coordinator protocol is synchronous while the frozen `BingXHttpClient` is
+async. It does not bridge, subclass, or modify either frozen contract. The
+manual composition root first runs the unchanged readiness boundary, which
+closes its own client. Only a `READY` result allows creation of a second client,
+pinned to the VST host selected by readiness. Both clients are closed on every
+path, and the script contains the sole `asyncio.run` call.
+
+The only allowed hosts are `https://open-api-vst.bingx.com` and
+`https://open-api-vst.bingx.pro`; Live hosts are rejected before credentials or
+composition. With the default `.com` host, readiness preserves the frozen
+network/timeout-only `.com` to `.pro` fallback. The canary client is then pinned
+to readiness's actual `selected_host`, so a non-retryable write never crosses
+hosts.
+
+```text
+canonical READY ExecutionIntent + supplied SHA-256
+  -> current VST constraints, book, account, positions, leverage, orders
+  -> immutable DemoOrderPlan + canonical digest
+  -> dry-run report (default; zero writes)
+  -> --execute + exact digest + typed deterministic client ID
+  -> one protected non-marketable LIMIT submission
+  -> query by clientOrderId
+  -> cancel once if open
+  -> final query + external state reconciliation
+  -> canonical sanitized report
+```
+
+`BingXAsyncDemoOrderAdapter` composes the existing HTTP client and has no
+generic request, market-order, transfer, withdrawal, account-setting,
+cancel-all, or close-position method. Its bounded surface is:
+
+| Category | Exact operation |
+| --- | --- |
+| Public reads | contract constraints and five-level order book |
+| Authenticated reads | balance, same-symbol positions, leverage, open orders, recent order history, and query by deterministic `clientOrderId` |
+| Authorized writes | one protected `POST .../trade/order` with `type=LIMIT`; one `DELETE .../trade/order` by `clientOrderId` if still open |
+| Lifecycle | close the owned client |
+
+The verified HTTP contracts used by that adapter are:
+
+| Purpose | Method and path |
+| --- | --- |
+| Contract constraints | `GET /openApi/swap/v2/quote/contracts` |
+| Five-level book | `GET /openApi/swap/v2/quote/depth` |
+| Balance | `GET /openApi/swap/v3/user/balance` |
+| Positions | `GET /openApi/swap/v2/user/positions` |
+| Current leverage | `GET /openApi/swap/v2/trade/leverage` |
+| Position mode | `GET /openApi/swap/v1/positionSide/dual` |
+| Existing/open history | `GET /openApi/swap/v2/trade/openOrders` and `GET /openApi/swap/v2/trade/allOrders` |
+| Submit/query/cancel | `POST`, `GET`, and `DELETE /openApi/swap/v2/trade/order`; query and cancel use `clientOrderId` |
+
+Attached `stopLoss` and `takeProfit` parameters are compact JSON objects with
+`STOP_MARKET`/`TAKE_PROFIT_MARKET`, explicit `MARK_PRICE`, trigger price, and
+`stopGuaranteed=false`. They are not the scalar values accepted by an older
+client convenience method. The adapter invokes the existing generic request
+boundary so URL construction, signing order, headers, timeouts, response/error
+handling, and non-retryable write behavior stay owned by `BingXHttpClient`.
+
+The client ID retains the frozen coordinator's `bingx-vst:<intent_id>` SHA-256
+seed and 24-hex suffix. The manual boundary removes the frozen helper's hyphen
+from the prefix because current official validation guidance conflicts on
+punctuation and the fail-closed compatible subset is lowercase alphanumeric,
+at most 40 characters. The frozen synchronous helper is not modified.
+
+Current precision fields are converted to `10^-pricePrecision` and
+`10^-quantityPrecision`; this is an explicit inference because the official
+contract schema provides precision counts but no separate tick/step fields.
+An approved intent must already be exactly normalized to those current values;
+the canary blocks instead of silently changing an approved order. Minimum
+quantity/notional, a fixed 10-VST-equivalent notional ceiling, current leverage
+at or below 2, an empty same-symbol position, a non-marketable limit, both
+attached protections, and duplicate-order checks are mandatory.
+
+Two narrowly proven transport defects required reopening the frozen HTTP
+client. `get_positions()` now rejects a successful payload that omits `data`
+instead of fabricating an authoritative empty position list. Retryable HTTP
+responses such as rate limits and 5xx unavailability now retry on the same host;
+only a network/timeout failure advances `.com` to `.pro`, as required by the
+official host contract. Valid empty position arrays and all endpoint, signing,
+timeout, and model contracts are unchanged. The canary adapter likewise
+requires the documented `data` container for open-order and order-history
+reads.
+
+Submission and cancellation are non-retryable writes. A submit transport
+failure or post-dispatch response-schema failure is treated as ambiguous and
+followed only by a client-ID query. A final client-ID absence check plus fresh
+constraint, book, same-symbol position, leverage, position-mode, and open-entry
+validations immediately precede submission. Any existing same-symbol
+non-reduce-only open order blocks the plan. An unexpected partial/full fill or
+unresolved remote state
+activates the canonical report's `KillSwitchState`; there is no recovery order
+or automatic flatten. Reports contain plan/order identifiers and small
+reconciliation summaries, but no credentials, signatures, headers, signed
+queries, raw response bodies, or account totals. No report persistence layer
+was added.
 
 ## Market-data contracts
 
@@ -188,7 +289,7 @@ current runtime. Availability in a library is not deployment authorization.
 
 The following are intentionally not part of the operating runtime:
 
-- VST demo-order composition and operator controls;
+- unattended VST Demo execution or automatic recovery;
 - shadow, micro-live, or unrestricted live operation;
 - MT5 connectivity;
 - production AI/ML decisioning or self-modifying weights;

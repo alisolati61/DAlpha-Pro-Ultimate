@@ -37,6 +37,40 @@ not be used to bypass subsystem freeze rules.
 - [x] Preserve the getpass-only Phase 1G readiness boundary.
 - [x] Record every retained compatibility blocker and post-Demo deferral.
 
+## Phase 1I-1 - Controlled BingX VST Demo canary
+
+- [x] Add a separate async-native, manual-only canary without modifying the
+  frozen synchronous VST coordinator or readiness behavior.
+- [x] Accept only the exact canonical serialized `READY` `ExecutionIntent` and
+  its supplied SHA-256; reject stale, noncanonical, non-ready, or modified
+  input before composition.
+- [x] Build an immutable canonical `DemoOrderPlan` from current contract,
+  order-book, balance, positions, leverage, open-order, and order-history
+  reads; bind all approved order fields and prerequisite snapshot digests.
+- [x] Enforce VST-only hosts, `LIMIT`/`GTC`, non-marketability, current
+  precision/minimums, both protections, fixed 10-notional and 2x-leverage
+  ceilings, no same-symbol position, and duplicate canary rejection.
+- [x] Require `--execute`, the exact rebuilt plan digest, and exact typed
+  `SUBMIT <clientOrderId>` approval before the only submission call.
+- [x] Recheck deterministic client-ID absence, constraints, book
+  non-marketability, same-symbol positions, leverage, position mode, and open
+  entry orders after confirmation immediately before that submission.
+- [x] Submit at most once with automatic write retry disabled; query and cancel
+  by deterministic client ID, then query and externally reconcile final state.
+- [x] Fail closed on ambiguous submission/cancellation or unexpected fill;
+  never resubmit blindly or auto-flatten.
+- [x] Keep credentials getpass-only and outputs canonical, minimal, and free of
+  credentials, signatures, signed queries, headers, raw bodies, paths, and
+  account totals.
+- [x] Keep automated tests fake-only and enforce closure, import safety, narrow
+  transport reachability, and exactly one CLI-boundary `asyncio.run`.
+- [ ] Before a human runs the canary, issue/verify least-privilege VST-only
+  credentials, name the operator and incident owner, preconfigure leverage at
+  or below the fixed cap, and approve sanitized report retention.
+- [ ] After any `AMBIGUOUS` or `UNEXPECTED_FILL` result, reconcile the VST
+  account manually before another invocation; no frozen automatic recovery
+  contract exists.
+
 ## Pre-existing quality debt
 
 These failures predate Phase 1H-1 and are not suppressed with repository-wide
@@ -218,14 +252,14 @@ blocker or as a separately approved post-Demo phase.
   obligations are reviewed. No license is granted by the current repository.
 - [x] Add deterministic secret scanning to CI with a reviewed fake-only
   test-value allowlist and value-redacting output.
-- [ ] Define credential rotation, least-privilege VST policy, and incident
-  ownership before any demo-order phase.
+- [ ] Complete operational credential rotation, least-privilege VST policy,
+  operator identity, and incident ownership before the first manual canary run.
 - [ ] Decide artifact-retention policy for sanitized diagnostics and
   checkpoints.
 
 ## Deferred deployment work
 
-- [ ] Design a separately authorized VST demo-order composition root.
+- [x] Add the separately authorized, manual-only Phase 1I-1 VST Demo canary.
 - [ ] Add shadow operation with zero order submission.
 - [ ] Gate micro-live operation behind independent security, risk, legal, and
   operational approval.

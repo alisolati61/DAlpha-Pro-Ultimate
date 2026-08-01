@@ -1,8 +1,10 @@
 # Project Manifest
 
-This manifest is the status index for the repository after the bounded Phase
-1H-2 hardening slice, with runtime behavior frozen at
-`vst-runtime-freeze-v1`. Architecture details live in
+This manifest is the status index for the repository through the bounded
+manual Phase 1I-1 Demo canary. Phase 1G runtime/readiness contracts remain
+frozen at `vst-runtime-freeze-v1`; Phase 1I-1 narrowly hardened missing-position
+data rejection and corrected host advancement so only network/timeout failures
+move `.com` reads to `.pro`. Architecture details live in
 [ARCHITECTURE.md](ARCHITECTURE.md); file-level legacy findings live in
 [REPOSITORY_AUDIT.md](REPOSITORY_AUDIT.md).
 
@@ -62,6 +64,7 @@ it becomes an operational blocker.
 | VST runtime | `src.vst_runtime` | Protocol-driven synchronous VST coordinator and reconciliation |
 | VST readiness | `src.vst_runtime.readiness`, `scripts/bingx_vst_readiness.py` | Async read-only server-time, balance, and positions validation |
 | Public VST diagnosis | `scripts/bingx_vst_transport_diagnostic.py` | Credential-free server-time transport classification |
+| Manual VST Demo canary | `src.vst_runtime.demo_order`, `src.vst_runtime.demo_transport`, `scripts/bingx_vst_demo_order.py` | Canonical dry-run plan and exactly gated one-order submit/query/cancel/reconcile lifecycle |
 | Repository security | `scripts/scan_repository_secrets.py` | Deterministic value-redacting scan of committed and current repository content |
 
 The exchange and execution libraries are real, tested libraries. They are not
@@ -78,6 +81,7 @@ RecordedMarketDataPayload
   -> explicit account + approved-risk + constraints + policy
   -> ExecutionIntent
   -> paper coordinator OR explicitly injected VST coordinator
+                     OR manual async VST Demo canary
 ```
 
 There is no automatic risk-snapshot producer and no automatic paper-to-VST
@@ -110,13 +114,17 @@ No compatibility module is silently aliased to a canonical contract.
 - read-only BingX VST readiness with bounded clock sampling;
 - sanitized transport diagnostics and deterministic host fallback;
 - fake-only automated VST tests;
+- dry-run-first manual VST Demo canary with exact intent/plan digests, current
+  constraints/account reads, a narrow adapter, one non-retryable protected
+  limit submission, deterministic client-ID recovery, and fail-closed final
+  reconciliation;
 - Doctor-only installed CLI and no automatic exchange wiring;
 - deterministic secret scanning with no runtime network or credential output;
 - removal regression coverage for the complete bounded dead-code manifest.
 
 ## Not implemented or not deployment-ready
 
-- a supported command that submits VST demo orders;
+- automatic, unattended, or default-runtime VST Demo submission;
 - shadow-mode orchestration;
 - micro-live or unrestricted live operation;
 - MT5;

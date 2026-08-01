@@ -22,6 +22,7 @@ from src.exchange.bingx_client import (
 )
 from src.exchange.exceptions import (
     AuthenticationError,
+    ExchangeError,
     InsufficientFundsError,
     InvalidSymbolError,
     NetworkError,
@@ -225,6 +226,47 @@ def test_network_retry_uses_official_fallback_domain() -> None:
     ]
     assert delays == [0.25]
 
+    run(http_client.aclose())
+
+
+@pytest.mark.parametrize("status_code", [429, 503])
+def test_retryable_http_response_never_changes_vst_domain(
+    status_code: int,
+) -> None:
+    hosts: list[str] = []
+
+    async def sleep(_delay: float) -> None:
+        return None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if len(hosts) == 1:
+            return httpx.Response(
+                status_code,
+                headers={"Retry-After": "0"},
+                json={"code": status_code, "msg": "retryable"},
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"ok": True}},
+            request=request,
+        )
+
+    client, http_client = build_client(
+        httpx.MockTransport(handler),
+        demo_mode=True,
+        max_retries=1,
+        sleep=sleep,
+    )
+
+    assert run(client.request("GET", "/public", signed=False))["data"] == {
+        "ok": True
+    }
+    assert hosts == [
+        "open-api-vst.bingx.com",
+        "open-api-vst.bingx.com",
+    ]
     run(http_client.aclose())
 
 
@@ -711,6 +753,13 @@ def test_account_parsers_support_current_bingx_payloads() -> None:
         assert positions[0].entry_price == Decimal("100")
 
     run(scenario())
+
+
+def test_positions_reject_missing_data_instead_of_fabricating_empty_state() -> None:
+    client = StubClient([{"code": 0}])
+
+    with pytest.raises(ExchangeError, match="missing data"):
+        run(client.get_positions("BTC-USDT"))
 
 
 def test_place_order_is_non_retryable_and_parses_string_order_id() -> None:

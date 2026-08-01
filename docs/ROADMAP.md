@@ -15,9 +15,10 @@ capability.
 | 1E - Execution intent | Complete/frozen | Explicit account/risk/constraint/policy input and deterministic execution intent (`execution-intent-freeze-v1`) |
 | 1F - Paper execution | Complete/frozen | Deterministic in-memory fills, protection, ledger, checkpoints, and reconciliation (`paper-runtime-freeze-v1`) |
 | 1G-1 - BingX VST runtime | Complete/frozen | Fail-closed synchronous coordinator over injected `VstTransport` |
-| 1G-2 - VST readiness | Complete/frozen | Async read-only BingX readiness and public transport diagnosis (`vst-runtime-freeze-v1`) |
+| 1G-2 - VST readiness | Complete/frozen contract | Async read-only BingX readiness and public transport diagnosis (`vst-runtime-freeze-v1`); Phase 1I-1 later hardened missing-position-data rejection and network/timeout-only host fallback |
 | 1H-1 - Repository truth and CI baseline | Complete | Authoritative docs, compatibility/audit inventory, security hygiene, and honest scoped CI |
 | 1H-2 - Bounded cleanup and governance | Complete | Reviewed dead/scaffold removal, obsolete network-script deletion, secret-scanning gate, and single dependency authority |
+| 1I-1 - Controlled VST Demo canary | Complete/manual | Dry-run-first immutable plan, exact operator approval, one bounded protected limit submission, client-ID query/cancel, and fail-closed reconciliation |
 
 The independently frozen risk, execution, and exchange libraries are marked by
 `risk-freeze-v1`, `execution-freeze-v1`, and `exchange-freeze-v1`.
@@ -79,11 +80,20 @@ Phase 1H plus deployment controls:
 
 ### Stage D - VST demo orders
 
-Deferred. Requires a separately approved composition root and operator command,
-least-privilege VST credentials, order-notional/session/position limits,
-idempotency evidence, cancel/reconcile recovery, sanitized audit output, and
-tests proving that readiness remains read-only. It must not reuse the readiness
-adapter for writes.
+Implemented only as the Phase 1I-1 manual canary. It is a separate composition
+root, not an installed/default runtime mode, and it does not reuse the
+readiness adapter for writes. The tool defaults to dry run and requires a
+canonical `READY` intent, current exchange/account prerequisites, a fixed
+conservative notional/leverage policy, the exact rebuilt plan digest, and typed
+client-ID confirmation. One protected non-marketable limit may be submitted;
+blind retry, pyramiding, automatic recovery orders, and Live hosts are blocked.
+
+Operational execution remains a human-controlled event. Least-privilege VST
+credential issuance, operator identity, incident ownership, and retention of
+sanitized output are deployment prerequisites outside the code gate. Phase
+1I-1 automated tests and implementation-time validation perform no network or
+exchange write; only the separately invoked manual `--execute` path can submit
+the bounded VST canary.
 
 ### Stage E - Shadow operation
 
