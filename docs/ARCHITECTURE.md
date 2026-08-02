@@ -17,6 +17,7 @@ promoted to production status.
 | `scripts/bingx_vst_readiness.py` | Explicit manual tool | Read-only VST readiness with hidden credentials |
 | `scripts/bingx_vst_transport_diagnostic.py` | Explicit manual tool | Public server-time transport diagnosis only |
 | `scripts/bingx_vst_capture_canary_inputs.py` | Explicit manual read-only tool | VST-attested market/account/constraint capture plus fixed canonical canary policy |
+| `scripts/bingx_vst_watch_canary.py` | Explicit manual bounded read-only tool | Foreground closed-candle capture/preparation/dry-run rehearsal; no execution path |
 | `scripts/bingx_vst_prepare_intent.py` | Explicit manual offline tool | Four canonical local inputs to a `READY` intent artifact; no credentials, environment, or network |
 | `scripts/bingx_vst_demo_order.py` | Explicit manual tool | Dry-run-first, one-order VST Demo canary with two-step approval |
 
@@ -158,6 +159,16 @@ Files are written transactionally and exclusively under
 `.operator-artifacts/canary-inputs/<capture_id>/`; conflict, symlink, path, or
 cleanup uncertainty blocks the operation.
 
+The optional `bingx_vst_watch_canary.py` composition remains manual and
+foreground. It prompts once, uses one top-level `asyncio.run`, immediately
+evaluates the latest settled candle, and then waits only for newly closed
+one-minute candles. It is capped at 1–10 attempts (default 5) and a monotonic
+deadline. Each attempt reuses the existing readiness, capture, preparation,
+canonical-intent verification, current Demo reads, and dry-run-plan services.
+Only `decision_hold` and `marketable_limit_price` are retryable; every other
+failure stops fail-closed. A read-only facade exposes no submit, cancel, or
+execution operation, and every underlying client closes on every path.
+
 ### 5. Offline manual intent preparation
 
 `src.vst_runtime.intent_preparation.prepare_demo_canary_intent()` is a narrow
@@ -217,7 +228,8 @@ four fresh operator-supplied canonical documents
   -> derived approved-risk snapshot
   -> frozen ExecutionIntentService
   -> READY-only local artifact + canonical report
-  -> separate Phase 1I-1 dry run
+  -> standalone separate Phase 1I-1 dry run
+     OR bounded foreground watcher dry-run composition
   -> operator inspection and stop before submission
 ```
 
@@ -425,7 +437,8 @@ The following are intentionally not part of the operating runtime:
 - production AI/ML decisioning or self-modifying weights;
 - automatic multi-exchange orchestration;
 - a deployed dashboard or API;
-- durable runtime persistence, schedulers, background workers, or polling.
+- durable runtime persistence, schedulers, background workers, or unbounded/
+  unattended polling.
 
 Analytics and backtesting modules exist, but they are not evidence that these
 deferred deployment capabilities are complete.

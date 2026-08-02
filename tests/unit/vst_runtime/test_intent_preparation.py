@@ -4,6 +4,7 @@ import hashlib
 import json
 import socket
 from datetime import UTC, datetime
+from decimal import Decimal, localcontext
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,10 @@ from src.execution_intent.models import IntentStatus
 from src.execution_intent.service import ExecutionIntentService
 from src.risk.risk_orchestrator import RiskOrchestrator
 from src.strategy.service import StrategyService
-from src.vst_runtime.demo_order import load_canonical_ready_intent
+from src.vst_runtime.demo_order import (
+    DEFAULT_DEMO_CANARY_POLICY,
+    load_canonical_ready_intent,
+)
 from src.vst_runtime.intent_preparation import (
     ACCOUNT_SCHEMA_VERSION,
     ARTIFACT_DIRECTORY_NAME,
@@ -557,7 +561,7 @@ def test_clock_is_rechecked_after_pipeline_before_artifact(tmp_path: Path) -> No
     assert not directory.exists()
 
 
-def test_fixed_canary_leverage_and_notional_caps_block_artifact(
+def test_fixed_canary_leverage_and_notional_caps_are_enforced(
     tmp_path: Path,
 ) -> None:
     leverage_documents = canonical_documents()
@@ -582,10 +586,162 @@ def test_fixed_canary_leverage_and_notional_caps_block_artifact(
         documents=notional_documents,
         label="notional",
     )
+    assert report.status == IntentStatus.READY.value
+    intent_path = artifact_file(report, notional_directory)
+    assert report.intent_digest is not None
+    intent, _digest = load_canonical_ready_intent(
+        intent_path.read_text(encoding="utf-8"),
+        report.intent_digest,
+    )
+    assert intent.entry is not None
+    assert intent.entry.quantity == Decimal("0.098")
+    assert (
+        intent.entry.price * intent.entry.quantity
+        <= DEFAULT_DEMO_CANARY_POLICY.maximum_notional
+    )
+
+
+def test_large_vst_equity_is_capped_before_the_exact_risk_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents = canonical_documents()
+    documents["market"]["events"][0]["payload"]["candles"] = [
+        [timestamp(-120_000), 62_800, 63_000, 62_700, 62_900, 1],
+        [timestamp(-60_000), 62_900, 63_200, 62_900, 63_100, 1],
+        [timestamp(), 63_100, 63_300, 63_000, 63_200, 1],
+    ]
+    documents["account"].update(
+        {"available_balance": "180000", "equity": "180000"}
+    )
+    documents["account"]["portfolio"].update(
+        {"balance": "180000", "equity": "180000"}
+    )
+    documents["constraints"].update(
+        {
+            "maximum_quantity": None,
+            "minimum_notional": "2",
+            "minimum_quantity": "0.0001",
+            "quantity_step": "0.0001",
+        }
+    )
+    observed_sizes: list[float] = []
+    evaluate_trade = RiskOrchestrator.evaluate_trade
+
+    def observe_risk_call(
+        self: RiskOrchestrator,
+        **kwargs: Any,
+    ) -> Any:
+        observed_sizes.append(kwargs["position_size"])
+        return evaluate_trade(self, **kwargs)
+
+    monkeypatch.setattr(RiskOrchestrator, "evaluate_trade", observe_risk_call)
+
+    report, directory = prepare(
+        tmp_path,
+        documents=documents,
+        label="large-vst-equity",
+    )
+
+    assert report.status == IntentStatus.READY.value
+    assert report.intent_digest is not None
+    intent, _digest = load_canonical_ready_intent(
+        artifact_file(report, directory).read_text(encoding="utf-8"),
+        report.intent_digest,
+    )
+    assert intent.entry is not None
+    assert intent.entry.quantity == Decimal("0.0001")
+    assert observed_sizes == [float(intent.entry.quantity)]
+    assert (
+        intent.entry.price * intent.entry.quantity
+        <= DEFAULT_DEMO_CANARY_POLICY.maximum_notional
+    )
+
+
+def test_below_cap_nonstep_quantity_is_normalized_before_risk_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents = canonical_documents()
+    documents["account"].update({"available_balance": "101", "equity": "101"})
+    documents["account"]["portfolio"].update(
+        {"balance": "101", "equity": "101"}
+    )
+    observed_sizes: list[float] = []
+    evaluate_trade = RiskOrchestrator.evaluate_trade
+
+    def observe_risk_call(
+        self: RiskOrchestrator,
+        **kwargs: Any,
+    ) -> Any:
+        observed_sizes.append(kwargs["position_size"])
+        return evaluate_trade(self, **kwargs)
+
+    monkeypatch.setattr(RiskOrchestrator, "evaluate_trade", observe_risk_call)
+
+    report, directory = prepare(
+        tmp_path,
+        documents=documents,
+        label="nonstep-risk",
+    )
+
+    assert report.status == IntentStatus.READY.value
+    assert report.intent_digest is not None
+    intent, _digest = load_canonical_ready_intent(
+        artifact_file(report, directory).read_text(encoding="utf-8"),
+        report.intent_digest,
+    )
+    assert intent.entry is not None
+    assert intent.entry.quantity == Decimal("0.05")
+    assert observed_sizes == [float(intent.entry.quantity)]
+
+
+def test_capped_sizing_digest_is_independent_of_decimal_context(
+    tmp_path: Path,
+) -> None:
+    documents = canonical_documents()
+    documents["policy"]["execution"]["risk_percent"] = "1"
+    documents["policy"]["risk_limits"]["max_position_size"] = "1"
+    documents["constraints"]["maximum_quantity"] = "1"
+
+    with localcontext() as context:
+        context.prec = 9
+        first, first_directory = prepare(
+            tmp_path,
+            documents=documents,
+            label="decimal-context-9",
+        )
+    with localcontext() as context:
+        context.prec = 28
+        second, second_directory = prepare(
+            tmp_path,
+            documents=documents,
+            label="decimal-context-28",
+        )
+
+    assert first == second
+    assert artifact_file(first, first_directory).read_bytes() == artifact_file(
+        second,
+        second_directory,
+    ).read_bytes()
+
+
+def test_exchange_minimum_above_canary_cap_stays_fail_closed(
+    tmp_path: Path,
+) -> None:
+    documents = canonical_documents()
+    documents["constraints"]["minimum_notional"] = "11"
+
+    report, directory = prepare(
+        tmp_path,
+        documents=documents,
+        label="minimum-above-cap",
+    )
+
     assert report.status == IntentStatus.BLOCKED.value
-    assert report.reason_codes == ("canary_notional_exceeded",)
+    assert report.reason_codes == ("notional_below_minimum",)
     assert report.artifact_path is None
-    assert not notional_directory.exists()
+    assert not directory.exists()
 
 
 def test_preparation_has_no_exchange_network_or_write_path(

@@ -67,6 +67,7 @@ it becomes an operational blocker.
 | VST readiness | `src.vst_runtime.readiness`, `scripts/bingx_vst_readiness.py` | Async read-only server-time, balance, and positions validation |
 | Public VST diagnosis | `scripts/bingx_vst_transport_diagnostic.py` | Credential-free server-time transport classification |
 | Manual VST canary capture | `src.vst_runtime.canary_capture`, `scripts/bingx_vst_capture_canary_inputs.py` | Readiness-first, read-only market/account/contract acquisition and fixed-policy canonical input manifest |
+| Manual bounded VST watcher | `scripts/bingx_vst_watch_canary.py` | Foreground settled-candle capture/preparation/current-state dry run capped at 1–10 attempts; no execution operation |
 | Manual intent preparation | `src.vst_runtime.intent_preparation`, `scripts/bingx_vst_prepare_intent.py` | Offline four-input composition through frozen strategy/decision/risk/intent gates to a `READY`-only ignored artifact |
 | Manual VST Demo canary | `src.vst_runtime.demo_order`, `src.vst_runtime.demo_transport`, `scripts/bingx_vst_demo_order.py` | Canonical dry-run plan and exactly gated one-order submit/query/cancel/reconcile lifecycle |
 | Repository security | `scripts/scan_repository_secrets.py` | Deterministic value-redacting scan of committed and current repository content |
@@ -88,6 +89,8 @@ RecordedMarketDataPayload
                      OR Phase 1I-3 read-only canonical input capture
                         -> Phase 1I-2 READY-only local artifact
                         -> Phase 1I-1 manual async VST Demo dry run
+                     OR bounded foreground watcher over those same boundaries
+                        -> DRY_RUN_READY and stop
 ```
 
 There is no default-runtime risk-snapshot producer and no automatic
@@ -95,8 +98,10 @@ paper-to-VST switch. Phase 1I-3 can acquire the available market, balance,
 margin, position, income, contract, leverage, mode, and open-order facts through
 bounded VST GET requests and generate the fixed policy. Phase 1I-2 derives an
 approved-risk snapshot only after one explicit frozen risk evaluation over the
-four canonical documents. A caller must still invoke and inspect each boundary
-explicitly. There is no automatic shared or durable risk-state checkpoint.
+four canonical documents. The standalone commands still require explicit
+operator invocation and inspection at each boundary. The optional watcher
+composes them only inside one bounded foreground dry-run rehearsal. Neither
+path supplies an automatic shared or durable risk-state checkpoint.
 
 ## Compatibility and parallel surfaces
 
@@ -130,6 +135,11 @@ No compatibility module is silently aliased to a canonical contract.
   fund-flow loss derivation, all-position/open-order blockers, fixed policy,
   source-attestation manifest, exclusive ignored-directory output, and no
   exchange mutation reachability;
+- a getpass-only bounded foreground watcher with latest-settled/newly-closed
+  candle cadence, 1–10 attempts, retry limited to `decision_hold` and
+  `marketable_limit_price`, canonical intent verification, current
+  authoritative Demo reads, monotonic deadline, client closure, and zero
+  submission reachability;
 - offline, credential-free Phase 1I-2 preparation with strict canonical
   market/account/constraint/policy schemas, supplied source-digest verification,
   freshness checks, source and risk provenance digests, fixed `2x` risk
@@ -149,8 +159,8 @@ No compatibility module is silently aliased to a canonical contract.
 - automatic shared/durable risk-state checkpointing across preparation runs;
 - durable cross-process attestation of the standalone capture session's local
   kill-switch state;
-- automatic acquisition-to-preparation-to-dry-run orchestration (each command
-  remains an explicit operator step);
+- unbounded, unattended, scheduled, background, or default-runtime
+  acquisition-to-preparation-to-dry-run orchestration;
 - shadow-mode orchestration;
 - micro-live or unrestricted live operation;
 - MT5;
@@ -158,7 +168,7 @@ No compatibility module is silently aliased to a canonical contract.
 - automatic multi-exchange routing/orchestration;
 - a deployed dashboard/API;
 - durable paper/VST storage;
-- schedulers, background workers, or polling runtime;
+- schedulers, background workers, or unbounded/unattended polling runtime;
 - a resolved open-source/commercial license.
 
 Files bearing related names may exist as libraries or scaffolds; that does not

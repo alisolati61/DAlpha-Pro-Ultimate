@@ -20,7 +20,7 @@ capability.
 | 1H-2 - Bounded cleanup and governance | Complete | Reviewed dead/scaffold removal, obsolete network-script deletion, secret-scanning gate, and single dependency authority |
 | 1I-1 - Controlled VST Demo canary | Complete/manual | Dry-run-first immutable plan, exact operator approval, one bounded protected limit submission, client-ID query/cancel, and fail-closed reconciliation |
 | 1I-2 - Controlled intent preparation | Complete/manual | Offline four-input canonical composition through frozen strategy/decision/risk/intent gates to a `READY`-only local artifact |
-| 1I-3 - Attested canary capture/rehearsal | Complete/manual read-only | VST readiness followed by bounded market/account/contract acquisition, fixed policy generation, canonical input manifest, and an explicitly separate dry-run-only handoff |
+| 1I-3 - Attested canary capture/rehearsal | Complete/manual read-only | Bounded market/account/contract capture and canonical manifest, with both an explicit standalone handoff and an optional bounded foreground capture-to-dry-run watcher |
 
 The independently frozen risk, execution, and exchange libraries are marked by
 `risk-freeze-v1`, `execution-freeze-v1`, and `exchange-freeze-v1`.
@@ -114,10 +114,13 @@ at the fixed worst admitted `2x` leverage, and a normalized entry above the
 `10` notional ceiling is blocked before artifact creation.
 
 The preparation command uses no credentials, environment configuration,
-network, or exchange operation. The exact Phase 1I-3 rehearsal is capture,
-preparation, then the Phase 1I-1 dry run without `--execute`, followed by
-operator inspection of `DRY_RUN_READY` and a mandatory stop. No phase command
-automatically invokes the next one.
+network, or exchange operation. The standalone Phase 1I-3 rehearsal remains
+capture, preparation, then the Phase 1I-1 dry run without `--execute`, followed
+by inspection of `DRY_RUN_READY` and a mandatory stop. The optional bounded
+foreground watcher composes only those same read-only/dry-run boundaries,
+prompts once, evaluates the latest settled candle and then newly closed candles
+for at most 1–10 attempts, retries only `decision_hold` and
+`marketable_limit_price`, and has no submission path.
 
 Phase 1I-1 remains the separate manual canary. It is not an installed/default
 runtime mode and does not reuse the readiness adapter for writes. The tool
@@ -155,7 +158,7 @@ enablement must remain explicit and reversible.
 - automatic multi-exchange orchestration;
 - dashboard/API deployment;
 - general live trading;
-- background schedulers, workers, and polling;
+- background schedulers/workers and unbounded or unattended polling;
 - durable production state storage.
 
 Some library/scaffold code exists under these themes. None is a completed

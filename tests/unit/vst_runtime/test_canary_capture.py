@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -19,10 +20,12 @@ from src.vst_runtime.canary_capture import (
     CanaryCaptureReport,
     CapturedBalance,
     CapturedIncome,
+    _market_values,
     capture_canary_inputs,
     create_async_canary_capture_transport,
 )
 from src.vst_runtime.demo_order import (
+    DemoCanaryError,
     DemoContractConstraints,
     DemoLeverageSnapshot,
     DemoTopOfBook,
@@ -448,6 +451,96 @@ async def test_malformed_stale_duplicate_or_incomplete_candles_fail_closed(
     assert not (tmp_path / ".operator-artifacts").exists()
 
 
+def test_mapping_time_candle_is_incomplete_until_the_one_minute_close() -> None:
+    orderbook = DemoTopOfBook(
+        "BTC-USDT",
+        Decimal("99"),
+        Decimal("101"),
+        "book-1",
+    )
+    current = _kline(
+        0,
+        open_price="100",
+        high="101",
+        low="99",
+        close="100",
+    )
+    ambiguous = replace(current, close_time=current.open_time)
+    explicit = replace(
+        current,
+        close_time=current.open_time + timedelta(milliseconds=59_999),
+    )
+    history = (
+        _kline(2, open_price="98", high="100", low="97", close="99"),
+        _kline(1, open_price="99", high="101", low="98", close="100"),
+    )
+
+    for last in (ambiguous, explicit):
+        with pytest.raises(CanaryCaptureError) as caught:
+            _market_values(
+                (*history, last),
+                orderbook,
+                capture_time_ms=NOW_MS + 59_998,
+                validation_time_ms=NOW_MS + 59_998,
+            )
+        assert caught.value.reason_code == "insufficient_completed_candles"
+
+    values, _attestation = _market_values(
+        (*history, ambiguous),
+        orderbook,
+        capture_time_ms=NOW_MS + 59_999,
+        validation_time_ms=NOW_MS + 59_999,
+    )
+    rows = values["events"][0]["payload"]["candles"]  # type: ignore[index]
+    assert len(rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_open_mapping_candle_cannot_change_the_captured_strategy_signal(
+    tmp_path: Path,
+) -> None:
+    fake = CaptureFake([])
+    open_candle = _kline(
+        0,
+        open_price="90",
+        high="95",
+        low="80",
+        close="85",
+    )
+    fake.candles = (
+        *_candles(),
+        replace(open_candle, close_time=open_candle.open_time),
+    )
+
+    report, _capture_fake, _readiness, root, _ledger = await _capture(
+        tmp_path,
+        fake,
+    )
+    files = _bundle_files(report, root)
+    market = json.loads(files["market-input.json"])
+    rows = market["events"][0]["payload"]["candles"]
+    assert len(rows) == 3
+    assert rows[-1][0] != open_candle.open_time.isoformat().replace("+00:00", "Z")
+
+    manifest = json.loads(files["manifest.json"])
+    prepared_root = tmp_path / "prepared-open-candle" / ".operator-artifacts"
+    prepared_root.parent.mkdir()
+    prepared = prepare_demo_canary_intent(
+        market_json=files["market-input.json"],
+        market_digest=manifest["files"]["market-input.json"],
+        account_json=files["account-input.json"],
+        account_digest=manifest["files"]["account-input.json"],
+        constraints_json=files["constraints-input.json"],
+        constraints_digest=manifest["files"]["constraints-input.json"],
+        policy_json=files["policy-input.json"],
+        policy_digest=manifest["files"]["policy-input.json"],
+        artifact_directory=prepared_root,
+        clock_ms=lambda: NOW_MS,
+    )
+    assert prepared.status == "READY"
+    assert prepared.side == "BUY"
+
+
 def _position() -> BingXPosition:
     return BingXPosition(
         symbol="BTC-USDT",
@@ -479,6 +572,21 @@ def _open_order() -> RemoteOrder:
     )
 
 
+def _official_contract(**overrides: object) -> dict[str, object]:
+    contract: dict[str, object] = {
+        "apiStateClose": "true",
+        "apiStateOpen": "true",
+        "pricePrecision": 1,
+        "quantityPrecision": 4,
+        "status": 1,
+        "symbol": "BTC-USDT",
+        "tradeMinQuantity": 0.0001,
+        "tradeMinUSDT": 2,
+    }
+    contract.update(overrides)
+    return contract
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("case", "reason"),
@@ -489,6 +597,7 @@ def _open_order() -> RemoteOrder:
         ("open_order", "existing_open_entry_order"),
         ("income_incomplete", "risk_history_incomplete"),
         ("leverage", "demo_leverage_cap_exceeded"),
+        ("short_leverage", "demo_leverage_cap_exceeded"),
         ("mode", "invalid_position_mode_schema"),
         ("constraints", "invalid_constraints_schema"),
     ),
@@ -517,6 +626,8 @@ async def test_account_risk_and_constraint_facts_fail_instead_of_fabrication(
         )
     elif case == "leverage":
         fake.leverage = DemoLeverageSnapshot("BTC-USDT", 3, 1)
+    elif case == "short_leverage":
+        fake.leverage = DemoLeverageSnapshot("BTC-USDT", 1, 3)
     elif case == "mode":
         fake.position_mode = "UNKNOWN"
     else:
@@ -527,6 +638,12 @@ async def test_account_risk_and_constraint_facts_fail_instead_of_fabrication(
     with pytest.raises(CanaryCaptureError) as caught:
         await _capture(tmp_path, fake)
     assert caught.value.reason_code == reason
+    assert caught.value.selected_host == VST_HOST
+    blocked = CanaryCaptureReport.blocked(
+        caught.value.reason_code,
+        selected_host=caught.value.selected_host,
+    )
+    assert blocked.selected_host == VST_HOST
     assert not (tmp_path / ".operator-artifacts").exists()
 
 
@@ -546,6 +663,27 @@ async def test_income_risk_is_conservative_deterministic_and_not_fabricated(
     assert account["portfolio"]["daily_loss"] == "0.03"
     assert account["risk_state"]["circuit_breaker_consecutive_losses"] == 2
     assert account["risk_state"]["kill_switch_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_empty_income_history_produces_deterministic_zero_risk(
+    tmp_path: Path,
+) -> None:
+    first, *_first_rest, first_root, _first_ledger = await _capture(
+        tmp_path,
+        label="empty-first",
+    )
+    second, *_second_rest, second_root, _second_ledger = await _capture(
+        tmp_path,
+        label="empty-second",
+    )
+    first_account = _bundle_files(first, first_root)["account-input.json"]
+    second_account = _bundle_files(second, second_root)["account-input.json"]
+    account = json.loads(first_account)
+
+    assert first_account == second_account
+    assert account["portfolio"]["daily_loss"] == "0"
+    assert account["risk_state"]["circuit_breaker_consecutive_losses"] == 0
 
 
 @pytest.mark.asyncio
@@ -752,6 +890,255 @@ def test_default_factory_wraps_existing_frozen_client_without_network() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("btc_index", (0, 1))
+async def test_official_contract_array_selects_exact_btc_contract_and_caps_leverage(
+    btc_index: int,
+) -> None:
+    client = RecordingBingXClient()
+    other = _official_contract(symbol="ETH-USDT")
+    btc = _official_contract()
+    client.symbols = [btc, other] if btc_index == 0 else [other, btc]
+    adapter = BingXAsyncCanaryCaptureAdapter(client)
+
+    constraints = await adapter.fetch_constraints("BTC-USDT")
+
+    assert constraints.symbol == "BTC-USDT"
+    assert constraints.price_tick == Decimal("0.1")
+    assert constraints.quantity_step == Decimal("0.0001")
+    assert constraints.minimum_quantity == Decimal("0.0001")
+    assert constraints.minimum_notional == Decimal("2")
+    assert constraints.maximum_long_leverage == 2
+    assert constraints.maximum_short_leverage == 2
+    assert constraints.trading_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_contract_leverage_fields_are_ignored_and_account_leverage_is_separate(
+) -> None:
+    client = RecordingBingXClient()
+    client.symbols = [
+        _official_contract(
+            maxLongLeverage="not-a-contract-field",
+            maxShortLeverage=-999,
+        )
+    ]
+    client.responses = {
+        "/openApi/swap/v2/trade/leverage": {
+            "data": {"longLeverage": 1, "shortLeverage": 2}
+        }
+    }
+    adapter = BingXAsyncCanaryCaptureAdapter(client)
+
+    constraints = await adapter.fetch_constraints("BTC-USDT")
+    leverage = await adapter.fetch_leverage("BTC-USDT")
+
+    assert constraints.maximum_long_leverage == 2
+    assert constraints.maximum_short_leverage == 2
+    assert leverage == DemoLeverageSnapshot("BTC-USDT", 1, 2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data",
+    (
+        {},
+        {"longLeverage": 1},
+        {"shortLeverage": 1},
+        {"longLeverage": "bad", "shortLeverage": 1},
+    ),
+)
+async def test_incomplete_or_malformed_authenticated_leverage_blocks(
+    data: dict[str, object],
+) -> None:
+    client = RecordingBingXClient()
+    client.responses = {
+        "/openApi/swap/v2/trade/leverage": {"data": data},
+    }
+    adapter = BingXAsyncCanaryCaptureAdapter(client)
+
+    with pytest.raises(DemoCanaryError) as caught:
+        await adapter.fetch_leverage("BTC-USDT")
+
+    assert caught.value.reason_code == "invalid_leverage_schema"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("contracts", "reason"),
+    (
+        ([_official_contract(symbol="ETH-USDT")], "contract_not_found"),
+        ([_official_contract(), _official_contract()], "invalid_constraints_schema"),
+        ([_official_contract(status=0)], "contract_inactive"),
+        ([_official_contract(status="1")], "contract_inactive"),
+        ([_official_contract(status=True)], "contract_inactive"),
+        ([_official_contract(apiStateOpen="false")], "contract_open_disabled"),
+        ([_official_contract(apiStateOpen="enabled")], "invalid_constraints_schema"),
+        ([_official_contract(quantityPrecision="1.5")], "invalid_constraints_schema"),
+        ([_official_contract(quantityPrecision=True)], "invalid_constraints_schema"),
+        ([_official_contract(pricePrecision=-1)], "invalid_constraints_schema"),
+        ([_official_contract(pricePrecision=False)], "invalid_constraints_schema"),
+        ([_official_contract(tradeMinQuantity="0")], "invalid_constraints_schema"),
+        ([_official_contract(tradeMinQuantity="-1")], "invalid_constraints_schema"),
+        ([_official_contract(tradeMinQuantity="NaN")], "invalid_constraints_schema"),
+        (
+            [_official_contract(tradeMinQuantity="Infinity")],
+            "invalid_constraints_schema",
+        ),
+        ([_official_contract(tradeMinUSDT="0")], "invalid_constraints_schema"),
+        ([_official_contract(tradeMinUSDT="-1")], "invalid_constraints_schema"),
+        ([_official_contract(tradeMinUSDT="NaN")], "invalid_constraints_schema"),
+        ([_official_contract(tradeMinUSDT="Infinity")], "invalid_constraints_schema"),
+    ),
+)
+async def test_official_contract_schema_failures_are_stable_and_fail_closed(
+    contracts: list[dict[str, object]],
+    reason: str,
+) -> None:
+    client = RecordingBingXClient()
+    client.symbols = contracts
+    adapter = BingXAsyncCanaryCaptureAdapter(client)
+
+    with pytest.raises(CanaryCaptureError) as caught:
+        await adapter.fetch_constraints("BTC-USDT")
+
+    assert caught.value.reason_code == reason
+
+
+@pytest.mark.asyncio
+async def test_official_constraints_emit_null_maximum_and_pass_existing_consumers(
+    tmp_path: Path,
+) -> None:
+    client = RecordingBingXClient()
+    client.symbols = [_official_contract()]
+    concrete = BingXAsyncCanaryCaptureAdapter(client)
+    fake = CaptureFake([])
+    fake.constraints = await concrete.fetch_constraints("BTC-USDT")
+    fake.balances = (
+        CapturedBalance("VST", 100, 100, 100, 0),
+    )
+    report, _capture_fake, _readiness, root, _ledger = await _capture(
+        tmp_path,
+        fake,
+    )
+    files = _bundle_files(report, root)
+    manifest = json.loads(files["manifest.json"])
+    constraints_json = json.loads(files["constraints-input.json"])
+    assert constraints_json["maximum_quantity"] is None
+
+    prepared_root = tmp_path / "prepared" / ".operator-artifacts"
+    prepared_root.parent.mkdir()
+    prepared = prepare_demo_canary_intent(
+        market_json=files["market-input.json"],
+        market_digest=manifest["files"]["market-input.json"],
+        account_json=files["account-input.json"],
+        account_digest=manifest["files"]["account-input.json"],
+        constraints_json=files["constraints-input.json"],
+        constraints_digest=manifest["files"]["constraints-input.json"],
+        policy_json=files["policy-input.json"],
+        policy_digest=manifest["files"]["policy-input.json"],
+        artifact_directory=prepared_root,
+        clock_ms=lambda: NOW_MS,
+    )
+    assert prepared.status == "READY"
+    assert prepared.intent_digest is not None
+    assert prepared.artifact_path is not None
+    intent_path = tmp_path / "prepared" / prepared.artifact_path
+    intent, digest = load_canonical_ready_intent(
+        intent_path.read_text(encoding="utf-8"),
+        prepared.intent_digest,
+    )
+    demo = DemoFake()
+    plan = await build_demo_order_plan(intent, digest, demo, clock_ms=lambda: NOW_MS)
+    await demo.close()
+    assert plan.symbol == "BTC-USDT"
+    assert "submit" not in demo.calls and "cancel" not in demo.calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    (
+        {"code": 0, "data": None},
+        {"code": "0", "data": None, "success": True},
+    ),
+)
+async def test_successful_explicit_null_income_is_empty(
+    response: dict[str, object],
+) -> None:
+    client = RecordingBingXClient()
+    client.responses = {"/openApi/swap/v2/user/income": response}
+    adapter = BingXAsyncCanaryCaptureAdapter(client)
+
+    income = await adapter.fetch_income(
+        start_time_ms=NOW_MS - 1_000,
+        end_time_ms=NOW_MS,
+        limit=1_000,
+    )
+
+    assert tuple(income) == ()
+    assert client.calls == [
+        (
+            "GET",
+            "/openApi/swap/v2/user/income",
+            {"startTime": NOW_MS - 1_000, "endTime": NOW_MS, "limit": 1_000},
+            True,
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    (
+        {"code": 0},
+        {"code": 1, "data": None},
+        {"code": 0, "data": None, "success": False},
+    ),
+)
+async def test_missing_or_unsuccessful_null_income_fails_closed(
+    response: dict[str, object],
+) -> None:
+    client = RecordingBingXClient()
+    client.responses = {"/openApi/swap/v2/user/income": response}
+    adapter = BingXAsyncCanaryCaptureAdapter(client)
+
+    with pytest.raises(CanaryCaptureError) as caught:
+        await adapter.fetch_income(
+            start_time_ms=NOW_MS - 1_000,
+            end_time_ms=NOW_MS,
+            limit=1_000,
+        )
+
+    assert caught.value.reason_code == "invalid_income_schema"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    (
+        {"data": []},
+        {"data": {"income": []}},
+        {"data": {"records": []}},
+    ),
+)
+async def test_existing_empty_income_shapes_remain_accepted(
+    response: dict[str, object],
+) -> None:
+    client = RecordingBingXClient()
+    client.responses = {"/openApi/swap/v2/user/income": response}
+    adapter = BingXAsyncCanaryCaptureAdapter(client)
+
+    income = await adapter.fetch_income(
+        start_time_ms=NOW_MS - 1_000,
+        end_time_ms=NOW_MS,
+        limit=1_000,
+    )
+
+    assert tuple(income) == ()
+
+
+@pytest.mark.asyncio
 async def test_concrete_adapter_uses_only_documented_get_mappings() -> None:
     class CaptureRecordingClient(RecordingBingXClient):
         async def get_klines(
@@ -775,6 +1162,7 @@ async def test_concrete_adapter_uses_only_documented_get_mappings() -> None:
             return list(_candles())
 
     client = CaptureRecordingClient()
+    client.symbols = [_official_contract()]
     client.responses = {
         "/openApi/swap/v3/user/balance": {
             "data": [

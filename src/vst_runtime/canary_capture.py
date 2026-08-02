@@ -79,9 +79,10 @@ _KNOWN_INCOME_TYPES = frozenset(
 class CanaryCaptureError(Exception):
     """Sanitized stable blocker for the manual acquisition boundary."""
 
-    def __init__(self, reason_code: str) -> None:
+    def __init__(self, reason_code: str, *, selected_host: str | None = None) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
+        self.selected_host = selected_host
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +232,8 @@ class BingXAsyncCanaryCaptureAdapter:
         return tuple(await self.__client.get_positions())
 
     async def fetch_constraints(self, symbol: str) -> DemoContractConstraints:
-        return await self.__demo_reads.fetch_constraints(symbol)
+        contracts = await self.__client.get_symbols()
+        return _parse_contract_constraints(contracts, symbol)
 
     async def fetch_leverage(self, symbol: str) -> DemoLeverageSnapshot:
         return await self.__demo_reads.fetch_leverage(symbol)
@@ -319,12 +321,17 @@ class CanaryCaptureReport:
                 raise ValueError("captured report is incomplete")
 
     @classmethod
-    def blocked(cls, reason_code: str) -> CanaryCaptureReport:
+    def blocked(
+        cls,
+        reason_code: str,
+        *,
+        selected_host: str | None = None,
+    ) -> CanaryCaptureReport:
         return cls(
             status="BLOCKED",
             capture_id=None,
             artifact_directory=None,
-            selected_host=None,
+            selected_host=selected_host,
             created_at=None,
             expires_at=None,
             input_digests=(),
@@ -465,7 +472,16 @@ async def capture_canary_inputs(
                 acquisition_error = CanaryCaptureError("transport_close_failed")
 
     if acquisition_error is not None:
-        raise CanaryCaptureError(acquisition_error.reason_code) from None
+        attempted_host = readiness.selected_host
+        if transport is not None:
+            try:
+                attempted_host = _vst_host(transport.selected_host)
+            except CanaryCaptureError:
+                pass
+        raise CanaryCaptureError(
+            acquisition_error.reason_code,
+            selected_host=attempted_host,
+        ) from None
     if documents is None:
         raise CanaryCaptureError("capture_failed")
     relative_directory = _write_bundle(artifact_root, documents)
@@ -605,7 +621,7 @@ def _market_values(
             (
                 item
                 for item in candles
-                if _datetime_ms(item.close_time) <= capture_time_ms
+                if _effective_candle_close_ms(item) <= capture_time_ms
             ),
             key=lambda item: item.open_time,
         )
@@ -617,7 +633,7 @@ def _market_values(
         raise CanaryCaptureError("duplicate_candles")
     for index, item in enumerate(completed):
         open_ms = open_times[index]
-        close_ms = _datetime_ms(item.close_time)
+        close_ms = _effective_candle_close_ms(item)
         if close_ms < open_ms or close_ms >= open_ms + 60_000:
             raise CanaryCaptureError("incomplete_candle")
         if index and open_ms - open_times[index - 1] != 60_000:
@@ -667,6 +683,19 @@ def _market_values(
         }
     )
     return values, attestation
+
+
+def _effective_candle_close_ms(candle: BingXKline) -> int:
+    """Resolve only the proven one-minute mapping ambiguity at capture."""
+
+    open_ms = _datetime_ms(candle.open_time)
+    close_ms = _datetime_ms(candle.close_time)
+    if close_ms == open_ms:
+        # The frozen client maps BingX's mapping-form ``time`` field to both
+        # timestamps when no explicit closeTime is present.  For this fixed
+        # one-minute canary boundary, the candle closes at the final millisecond.
+        return open_ms + 59_999
+    return close_ms
 
 
 def _account_values(
@@ -857,7 +886,10 @@ def _constraints_values(
     attestation = _digest(
         {
             "constraints_snapshot_id": constraints.snapshot_id,
+            "leverage_source": "bingx-authenticated-account",
             "long_leverage": leverage.long_leverage,
+            "maximum_leverage_policy": DEFAULT_DEMO_CANARY_POLICY.maximum_leverage,
+            "maximum_leverage_source": "fixed-canary-policy",
             "position_mode": position_mode,
             "short_leverage": leverage.short_leverage,
             "symbol": CANARY_SYMBOL,
@@ -943,7 +975,18 @@ def _parse_captured_balances(
 
 
 def _parse_income(response: Mapping[str, Any]) -> tuple[CapturedIncome, ...]:
-    data = response.get("data")
+    if "data" not in response:
+        raise CanaryCaptureError("invalid_income_schema")
+    data = response["data"]
+    if data is None:
+        raw_code = response.get("code", 0)
+        try:
+            code = int(raw_code)
+        except (TypeError, ValueError):
+            code = -1
+        if code == 0 and response.get("success", True) is not False:
+            return ()
+        raise CanaryCaptureError("invalid_income_schema")
     if isinstance(data, Mapping):
         data = data.get("income", data.get("records"))
     if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
@@ -966,6 +1009,82 @@ def _parse_income(response: Mapping[str, Any]) -> tuple[CapturedIncome, ...]:
             )
         )
     return tuple(result)
+
+
+def _parse_contract_constraints(
+    contracts: Sequence[Mapping[str, Any]],
+    symbol: str,
+) -> DemoContractConstraints:
+    if symbol != CANARY_SYMBOL or not isinstance(contracts, Sequence):
+        raise CanaryCaptureError("invalid_constraints_schema")
+    matches = tuple(item for item in contracts if item.get("symbol") == symbol)
+    if not matches:
+        raise CanaryCaptureError("contract_not_found")
+    if len(matches) != 1:
+        raise CanaryCaptureError("invalid_constraints_schema")
+    item = matches[0]
+    required = (
+        "apiStateOpen",
+        "pricePrecision",
+        "quantityPrecision",
+        "status",
+        "symbol",
+        "tradeMinQuantity",
+        "tradeMinUSDT",
+    )
+    if any(name not in item for name in required):
+        raise CanaryCaptureError("invalid_constraints_schema")
+    if (
+        isinstance(item["status"], bool)
+        or not isinstance(item["status"], int)
+        or item["status"] != 1
+    ):
+        raise CanaryCaptureError("contract_inactive")
+    if not _api_state(item["apiStateOpen"]):
+        raise CanaryCaptureError("contract_open_disabled")
+    quantity_precision = _constraint_precision(item["quantityPrecision"])
+    price_precision = _constraint_precision(item["pricePrecision"])
+    minimum_quantity = _positive_constraint_decimal(item["tradeMinQuantity"])
+    minimum_notional = _positive_constraint_decimal(item["tradeMinUSDT"])
+    try:
+        return DemoContractConstraints(
+            symbol=symbol,
+            price_tick=Decimal(1).scaleb(-price_precision),
+            quantity_step=Decimal(1).scaleb(-quantity_precision),
+            minimum_quantity=minimum_quantity,
+            minimum_notional=minimum_notional,
+            maximum_long_leverage=DEFAULT_DEMO_CANARY_POLICY.maximum_leverage,
+            maximum_short_leverage=DEFAULT_DEMO_CANARY_POLICY.maximum_leverage,
+            trading_enabled=True,
+        )
+    except (TypeError, ValueError):
+        raise CanaryCaptureError("invalid_constraints_schema") from None
+
+
+def _constraint_precision(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise CanaryCaptureError("invalid_constraints_schema")
+    if value < 0:
+        raise CanaryCaptureError("invalid_constraints_schema")
+    return value
+
+
+def _positive_constraint_decimal(value: object) -> Decimal:
+    result = _decimal(value, "invalid_constraints_schema")
+    if result <= 0:
+        raise CanaryCaptureError("invalid_constraints_schema")
+    return result
+
+
+def _api_state(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value == "true":
+            return True
+        if value == "false":
+            return False
+    raise CanaryCaptureError("invalid_constraints_schema")
 
 
 def _write_bundle(root: Path, documents: _CapturedDocuments) -> str:

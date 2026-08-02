@@ -9,7 +9,13 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import (
+    ROUND_CEILING,
+    ROUND_FLOOR,
+    Decimal,
+    InvalidOperation,
+    localcontext,
+)
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +183,12 @@ class _PreparedInputs:
     constraints_observed_at: datetime
     constraints_digest: str
     policy: _PolicyInput
+
+
+@dataclass(frozen=True, slots=True)
+class _CanarySizing:
+    quantity: Decimal
+    execution_policy: ExecutionPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -737,13 +749,13 @@ def _run_pipeline(inputs: _PreparedInputs) -> _PipelineResult:
             exchange=inputs.market.exchange,
             timeframe=inputs.market.timeframe,
         )
-        position_size = _candidate_position_size(proposal, inputs)
+        sizing = _candidate_position_size(proposal, inputs)
         risk = _risk_orchestrator(inputs)
         decision_service = DecisionService(
             risk,
             portfolio=inputs.account.portfolio,
-            position_size=position_size,
-            leverage=float(inputs.policy.execution.leverage),
+            position_size=float(sizing.quantity),
+            leverage=float(sizing.execution_policy.leverage),
         )
         intent_service = ExecutionIntentService()
         for downstream_service in (decision_service, intent_service):
@@ -762,21 +774,23 @@ def _run_pipeline(inputs: _PreparedInputs) -> _PipelineResult:
                 or risk_evaluation_id is None
             ):
                 raise IntentPreparationError("risk_approval_unavailable")
-            approval = ApprovedRiskSnapshot(
-                decision_id=decision.decision_id,
-                maximum_quantity=Decimal(str(position_size)),
-                risk_percent=inputs.policy.execution.risk_percent,
-                leverage=inputs.policy.execution.leverage,
-                risk_reference=risk_evaluation_id,
-            )
-            intent = intent_service.construct(
-                decision,
-                proposal=proposal,
-                account=inputs.account.execution,
-                risk_approval=approval,
-                constraints=inputs.constraints,
-                policy=inputs.policy.execution,
-            )
+            with localcontext() as context:
+                context.prec = 50
+                approval = ApprovedRiskSnapshot(
+                    decision_id=decision.decision_id,
+                    maximum_quantity=sizing.quantity,
+                    risk_percent=sizing.execution_policy.risk_percent,
+                    leverage=sizing.execution_policy.leverage,
+                    risk_reference=risk_evaluation_id,
+                )
+                intent = intent_service.construct(
+                    decision,
+                    proposal=proposal,
+                    account=inputs.account.execution,
+                    risk_approval=approval,
+                    constraints=inputs.constraints,
+                    policy=sizing.execution_policy,
+                )
         else:
             intent = intent_service.construct(decision)
         result = _PipelineResult(intent, proposal, decision, risk_evaluation_id)
@@ -797,19 +811,133 @@ def _run_pipeline(inputs: _PreparedInputs) -> _PipelineResult:
 def _candidate_position_size(
     proposal: TradeProposal,
     inputs: _PreparedInputs,
-) -> float:
+) -> _CanarySizing:
     if (
         proposal.direction is ProposalDirection.HOLD
         or proposal.stop_loss_candidate is None
     ):
-        return float(inputs.constraints.minimum_quantity)
+        return _CanarySizing(
+            inputs.constraints.minimum_quantity,
+            inputs.policy.execution,
+        )
     sizing = PositionSizer.calculate_position_size(
         balance=float(inputs.account.execution.equity),
         risk_percent=float(inputs.policy.execution.risk_percent),
         entry_price=proposal.entry_reference_price,
         stop_loss=proposal.stop_loss_candidate,
     )
-    return sizing.position_size
+    raw_quantity = Decimal(str(sizing.position_size))
+    entry, stop = _normalized_entry_and_stop(proposal, inputs.constraints)
+    distance = abs(entry - stop)
+    if entry <= 0 or stop <= 0 or distance <= 0:
+        raise IntentPreparationError("canary_size_unavailable")
+
+    normalized_sizing = PositionSizer.calculate_position_size(
+        balance=float(inputs.account.execution.equity),
+        risk_percent=float(inputs.policy.execution.risk_percent),
+        entry_price=float(entry),
+        stop_loss=float(stop),
+    )
+    normalized_raw_quantity = Decimal(str(normalized_sizing.position_size))
+
+    quantity_step = inputs.constraints.quantity_step
+    maximum_notional_quantity = _maximum_quantity_for_notional(
+        DEFAULT_DEMO_CANARY_POLICY.maximum_notional,
+        entry,
+        quantity_step,
+    )
+    caps = (
+        maximum_notional_quantity,
+        Decimal(str(inputs.policy.max_position_size)),
+        normalized_raw_quantity,
+        *(
+            ()
+            if inputs.constraints.maximum_quantity is None
+            else (inputs.constraints.maximum_quantity,)
+        ),
+    )
+    capped_quantity = min(raw_quantity, *caps)
+    quantity = _ticks(capped_quantity, quantity_step, ROUND_FLOOR)
+    if quantity <= 0 or Decimal(str(float(quantity))) != quantity:
+        raise IntentPreparationError("canary_size_unavailable")
+
+    if _ticks(normalized_raw_quantity, quantity_step, ROUND_FLOOR) == quantity:
+        return _CanarySizing(quantity, inputs.policy.execution)
+
+    # Aim inside the selected exchange step without exceeding the quantity
+    # allowed by the canonical risk policy.  The frozen sizer then floors back
+    # to the exact quantity already evaluated by DecisionService.
+    with localcontext() as context:
+        context.prec = 50
+        upper_target = min(
+            quantity + quantity_step,
+            normalized_raw_quantity,
+        )
+        raw_target = quantity + ((upper_target - quantity) / Decimal(2))
+        effective_risk_percent = (
+            raw_target
+            * distance
+            * Decimal(100)
+            / inputs.account.execution.equity
+        )
+        if (
+            raw_target <= quantity
+            or effective_risk_percent <= 0
+            or effective_risk_percent > inputs.policy.execution.risk_percent
+        ):
+            raise IntentPreparationError("canary_size_unavailable")
+        execution_policy = ExecutionPolicy(
+            risk_percent=effective_risk_percent,
+            leverage=inputs.policy.execution.leverage,
+            maximum_exposure_ratio=inputs.policy.execution.maximum_exposure_ratio,
+        )
+    normalized = PositionSizer.calculate_position_size(
+        balance=float(inputs.account.execution.equity),
+        risk_percent=float(execution_policy.risk_percent),
+        entry_price=float(entry),
+        stop_loss=float(stop),
+    )
+    normalized_quantity = _ticks(
+        Decimal(str(normalized.position_size)),
+        quantity_step,
+        ROUND_FLOOR,
+    )
+    if normalized_quantity != quantity:
+        raise IntentPreparationError("canary_size_unavailable")
+    return _CanarySizing(quantity, execution_policy)
+
+
+def _normalized_entry_and_stop(
+    proposal: TradeProposal,
+    constraints: InstrumentConstraints,
+) -> tuple[Decimal, Decimal]:
+    entry = Decimal(str(proposal.entry_reference_price))
+    stop = Decimal(str(proposal.stop_loss_candidate))
+    if proposal.direction is ProposalDirection.LONG:
+        return (
+            _ticks(entry, constraints.price_tick, ROUND_FLOOR),
+            _ticks(stop, constraints.price_tick, ROUND_CEILING),
+        )
+    return (
+        _ticks(entry, constraints.price_tick, ROUND_CEILING),
+        _ticks(stop, constraints.price_tick, ROUND_FLOOR),
+    )
+
+
+def _ticks(value: Decimal, tick: Decimal, rounding: str) -> Decimal:
+    with localcontext() as context:
+        context.prec = 50
+        return (value / tick).to_integral_value(rounding=rounding) * tick
+
+
+def _maximum_quantity_for_notional(
+    notional: Decimal,
+    entry: Decimal,
+    quantity_step: Decimal,
+) -> Decimal:
+    with localcontext() as context:
+        context.prec = 50
+        return _ticks(notional / entry, quantity_step, ROUND_FLOOR)
 
 
 def _risk_orchestrator(inputs: _PreparedInputs) -> _ObservedRiskOrchestrator:

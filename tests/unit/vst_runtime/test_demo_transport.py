@@ -80,8 +80,6 @@ class RecordingBingXClient(BingXHttpClient):
         self.symbols: list[dict[str, object]] = [
             {
                 "apiStateOpen": "true",
-                "maxLongLeverage": 5,
-                "maxShortLeverage": 4,
                 "pricePrecision": 1,
                 "quantityPrecision": 3,
                 "status": 1,
@@ -168,8 +166,8 @@ async def test_adapter_read_mapping_and_official_read_paths() -> None:
     assert contract.quantity_step == Decimal("0.001")
     assert contract.minimum_quantity == Decimal("0.001")
     assert contract.minimum_notional == Decimal("1")
-    assert contract.maximum_long_leverage == 5
-    assert contract.maximum_short_leverage == 4
+    assert contract.maximum_long_leverage == 2
+    assert contract.maximum_short_leverage == 2
     assert contract.trading_enabled
     assert (book.best_bid, book.best_ask, book.update_id) == (
         Decimal("99"),
@@ -214,6 +212,29 @@ async def test_adapter_read_mapping_and_official_read_paths() -> None:
             None,
         ),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_fields"),
+    (
+        {},
+        {"maxLongLeverage": None, "maxShortLeverage": "not-authoritative"},
+    ),
+)
+async def test_official_vst_contract_uses_the_fixed_canary_leverage_cap(
+    extra_fields: dict[str, object],
+) -> None:
+    client = RecordingBingXClient()
+    client.symbols[0].update(extra_fields)
+    adapter = BingXAsyncDemoOrderAdapter(client)
+
+    constraints = await adapter.fetch_constraints("BTC-USDT")
+
+    assert constraints.maximum_long_leverage == 2
+    assert constraints.maximum_short_leverage == 2
+    assert constraints.trading_enabled
+    assert client.calls == []
 
 
 @pytest.mark.asyncio

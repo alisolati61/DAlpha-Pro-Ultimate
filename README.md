@@ -15,6 +15,10 @@ canary. It accepts only a canonical `READY` execution intent and defaults to a
 read-only dry run. None of these tools is registered in the installed CLI or
 default runtime.
 
+A separate bounded foreground watcher can compose those same three boundaries
+through `DRY_RUN_READY`; it is not installed, unattended, or capable of
+submission.
+
 It is not a live-trading application. No default runtime submits an order, and
 the installed CLI exposes local diagnostics only.
 
@@ -37,6 +41,11 @@ manual VST read-only input capture
   -> manual offline intent preparation
   -> manual DemoOrderPlan dry run
   -> stop
+
+bounded foreground VST watcher
+  -> evaluate the latest settled candle, then newly closed one-minute candles
+  -> the same capture + preparation + dry-run boundaries
+  -> stop at DRY_RUN_READY, a fail-closed blocker, interruption, or the limit
 ```
 
 The canonical runtime factory,
@@ -212,15 +221,33 @@ enforces `BTC-USDT`, protected `LIMIT` execution, quote notional at most `10`,
 leverage at most `2`, no pyramiding, no existing position, and a five-minute
 TTL. There is no CLI control that can weaken it.
 
-The exact three-step rehearsal is:
+The standalone rehearsal remains an exact three-step flow:
 
 1. Run the capture command above and copy its generated preparation command.
 2. Run that generated command and continue only if its status is `READY`.
 3. Run the printed Demo-order command without `--execute`, inspect
    `DRY_RUN_READY`, and stop.
 
-Capture and preparation never invoke the next step automatically, and this
-Phase 1I-3 workflow does not authorize a submission.
+For a latency-free but still manual and bounded rehearsal, the foreground
+watcher composes those same boundaries:
+
+```powershell
+python scripts/bingx_vst_watch_canary.py `
+  --host https://open-api-vst.bingx.com `
+  --attempts 5
+```
+
+It prompts for both credentials once, immediately evaluates the latest safely
+settled one-minute candle, and then waits only for newly closed candles. It
+retries only `decision_hold` or `marketable_limit_price`. `--attempts` accepts
+`1` through `10` and defaults to `5`. The process stops immediately on
+`DRY_RUN_READY`, any other blocker, interruption, duration exhaustion, or the
+attempt limit. It has no `--execute` option and cannot submit, cancel, transfer,
+or mutate exchange/account state.
+
+The standalone capture and preparation commands still never invoke the next
+step. The watcher is a finite foreground convenience composition, not a
+scheduler, background worker, unattended runtime, or submission authorization.
 
 ## Offline VST intent preparation
 
@@ -316,8 +343,8 @@ the ignored local artifact only: it reads no environment or dotenv values,
 requests no credentials, performs no network call, and exposes no exchange
 read or write.
 
-After reviewing a `READY` report and its artifact, run only the separate Phase
-1I-1 dry-run handoff:
+For the standalone flow, after reviewing a `READY` report and its artifact, run
+only the separate Phase 1I-1 dry-run handoff:
 
 ```powershell
 python scripts/bingx_vst_demo_order.py `
@@ -403,6 +430,7 @@ python -m mypy --follow-imports=skip --ignore-missing-imports `
   scripts/bingx_vst_prepare_intent.py `
   scripts/bingx_vst_readiness.py `
   scripts/bingx_vst_transport_diagnostic.py `
+  scripts/bingx_vst_watch_canary.py `
   scripts/scan_repository_secrets.py
 python -m compileall -q src scripts main.py
 python -m build
@@ -454,7 +482,8 @@ The following are intentionally deferred:
 - production AI/ML decisioning;
 - automatic multi-exchange orchestration;
 - dashboard/API deployment;
-- durable paper/VST state persistence and background operation.
+- durable paper/VST state persistence, background operation, and unbounded or
+  unattended polling.
 - exchange-attested account/constraint input acquisition or a shared durable
   risk-state checkpoint for offline intent preparation.
 

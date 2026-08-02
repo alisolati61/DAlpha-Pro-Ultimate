@@ -147,7 +147,10 @@ def main(
     except SystemExit:
         raise
     except CanaryCaptureError as error:
-        report = CanaryCaptureReport.blocked(error.reason_code)
+        report = CanaryCaptureReport.blocked(
+            error.reason_code,
+            selected_host=error.selected_host,
+        )
     except Exception:
         report = CanaryCaptureReport.blocked("capture_runtime_failed")
     output(report.to_json())

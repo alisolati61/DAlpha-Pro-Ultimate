@@ -17,6 +17,7 @@ from src.exchange.models import BingXBalance, BingXPosition
 from src.execution_intent.models import decimal_text
 
 from .demo_order import (
+    DEFAULT_DEMO_CANARY_POLICY,
     AsyncDemoOrderTransport,
     DemoAmbiguousSubmission,
     DemoCanaryError,
@@ -71,11 +72,11 @@ class BingXAsyncDemoOrderAdapter:
                 minimum_notional=_positive_decimal(
                     item.get("tradeMinUSDT"), "constraints"
                 ),
-                maximum_long_leverage=_integer(
-                    item.get("maxLongLeverage"), "constraints", minimum=1
+                maximum_long_leverage=(
+                    DEFAULT_DEMO_CANARY_POLICY.maximum_leverage
                 ),
-                maximum_short_leverage=_integer(
-                    item.get("maxShortLeverage"), "constraints", minimum=1
+                maximum_short_leverage=(
+                    DEFAULT_DEMO_CANARY_POLICY.maximum_leverage
                 ),
                 trading_enabled=_trading_enabled(item),
             )

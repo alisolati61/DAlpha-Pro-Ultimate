@@ -95,8 +95,9 @@ not be used to bypass subsystem freeze rules.
   ignore all local operator artifacts in Git.
 - [x] Keep preparation free of credentials, environment/dotenv loading,
   network calls, exchange reads, and every order/cancel/write operation.
-- [x] Hand a reviewed artifact and digest only to the separate Phase 1I-1 dry
-  run, then stop before `--execute`, typed approval, or submission.
+- [x] Hand a reviewed artifact and digest through the standalone flow only to
+  the separate Phase 1I-1 dry run, then stop before `--execute`, typed approval,
+  or submission.
 - [x] Add a separate Phase 1I-3 read-only acquisition path for fresh BingX
   market/account/constraint facts and a fixed policy; canonical hashes alone
   still do not attest directly supplied Phase 1I-2 input.
@@ -130,11 +131,20 @@ not be used to bypass subsystem freeze rules.
 - [x] Write four canonical files and a source-attestation manifest exclusively
   under `.operator-artifacts/canary-inputs/<capture_id>/`, with no overwrite,
   symlink/path escape, residual temporary file, credential, or console balance.
-- [x] Print exact preparation and dry-run-without-`--execute` handoff commands;
-  do not invoke either command automatically and stop after `DRY_RUN_READY`.
-- [x] Keep automated capture/preparation/Demo rehearsal fake-only and prove
-  lifecycle closure, import safety, deterministic bytes/digests, narrow reads,
-  and zero exchange write reachability.
+- [x] In the standalone capture CLI, print exact preparation and
+  dry-run-without-`--execute` handoff commands; that CLI does not invoke either
+  command automatically.
+- [x] Add a separate manual bounded foreground watcher that prompts once,
+  evaluates the latest settled candle, waits for newly closed one-minute
+  candles, caps attempts at 1–10, composes the existing
+  capture/preparation/dry-run services, retries only `decision_hold` and
+  `marketable_limit_price`, closes every client, exposes no execution flag or
+  write operation, and stops at `DRY_RUN_READY` or the first non-retryable
+  blocker.
+- [x] Keep automated capture/preparation/Demo/watcher rehearsal fake-only and
+  prove bounded attempts and waits, early/fail-closed stopping, lifecycle
+  closure, import safety, deterministic bytes/digests, narrow reads, and zero
+  exchange write reachability.
 - [ ] Add an approved durable local risk-state authority before treating a
   standalone fresh capture's inactive kill-switch state as valid across
   processes or prior operator sessions.
