@@ -516,6 +516,79 @@ async def test_dry_run_uses_read_only_facade_and_closes_every_client(
     assert "cancel_order" not in call_names
 
 
+def test_watch_never_composes_an_execute_capability_or_self_approved_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Watch is a read-only rehearsal boundary, never an approval or write path.
+
+    It must never reach ``execute_demo_order_plan`` (not even importable in
+    this module's namespace), and a successful ``DRY_RUN_READY`` result must
+    never hand the operator a ready-to-run ``--execute ... --plan-digest``
+    invocation keyed off its own report digest. Only a separate, later run of
+    the ``bingx_vst_demo_order.py`` dry-run stage produces the persisted plan
+    artifact that an operator may eventually approve for execution.
+    """
+
+    assert "execute_demo_order_plan" not in vars(command)
+
+    fake_time = FakeTime()
+    capture_calls = 0
+    dry_calls = 0
+    output: list[str] = []
+
+    async def capture(*args: object, **kwargs: object) -> CanaryCaptureReport:
+        nonlocal capture_calls
+        del args, kwargs
+        capture_calls += 1
+        return _capture(capture_calls)
+
+    async def dry_run(*args: object, **kwargs: object):
+        nonlocal dry_calls
+        del args, kwargs
+        dry_calls += 1
+        return await _dry_run_result()
+
+    def credential(prompt: str) -> str:
+        return "vst-key" if "API key" in prompt else "vst-secret"
+
+    monkeypatch.setattr(command, "capture_canary_inputs", capture)
+    monkeypatch.setattr(command, "_prepare_capture", lambda *args, **kwargs: _ready())
+    monkeypatch.setattr(command, "_dry_run_prepared", dry_run)
+
+    assert command.main(
+        ["--attempts", "5"],
+        credential_provider=credential,
+        readiness_provider=_unused_provider,  # type: ignore[arg-type]
+        capture_provider=_unused_provider,  # type: ignore[arg-type]
+        demo_transport_provider=_unused_provider,  # type: ignore[arg-type]
+        output=output.append,
+        clock_ms=fake_time.clock_ms,
+        monotonic=fake_time.monotonic,
+        sleeper=fake_time.sleep,
+        artifact_root=tmp_path / ".operator-artifacts",
+    ) == 0
+    assert capture_calls == dry_calls == 1
+
+    final = json.loads(output[-1])
+    assert final["status"] == DemoOrderStatus.DRY_RUN_READY.value
+    plan_digest = final["demo_report"]["plan"]["digest"]
+    assert plan_digest
+
+    # No emitted line ever assembles an executable "--execute ... --plan-digest
+    # <digest>" command; watch has no execute vocabulary to offer the operator
+    # at all, so it cannot point one at its own report digest.
+    rendered = "\n".join(output)
+    assert "--execute" not in rendered
+    assert "--plan-file" not in rendered
+    assert "--plan-digest" not in rendered
+    assert "next_execute_command" not in rendered
+    for report_text in output:
+        report = json.loads(report_text)
+        assert "next_execute_command" not in report
+        assert "plan_artifact_path" not in report
+
+
 @pytest.mark.asyncio
 async def test_dry_run_preserves_final_host_and_primary_failure_when_close_fails(
     monkeypatch: pytest.MonkeyPatch,

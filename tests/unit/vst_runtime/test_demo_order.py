@@ -31,6 +31,7 @@ from src.vst_runtime.demo_order import (
     deterministic_client_order_id,
     dry_run_report,
     execute_demo_order_plan,
+    load_canonical_demo_order_plan,
     load_canonical_ready_intent,
 )
 from src.vst_runtime.models import RemoteOrder, RemoteOrderStatus
@@ -339,6 +340,102 @@ def test_canonical_ready_intent_requires_exact_digest_status_and_shape() -> None
         load_canonical_ready_intent(
             changed, hashlib.sha256(changed.encode()).hexdigest()
         )
+
+
+def _tampered_plan_json(plan: DemoOrderPlan, **changes: object) -> str:
+    payload = json.loads(plan.to_json())
+    payload.update(changes)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_round_trips_exact_bytes() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    loaded = load_canonical_demo_order_plan(plan.to_json())
+    assert loaded == plan
+    assert loaded.digest == plan.digest
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_rejects_tampered_field() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    tampered = _tampered_plan_json(
+        plan,
+        quantity="0.06",
+        notional=str(Decimal("0.06") * plan.limit_price),
+    )
+    with pytest.raises(DemoCanaryError, match="plan_artifact_digest_mismatch"):
+        load_canonical_demo_order_plan(tampered)
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_rejects_tampered_embedded_digest() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    tampered = _tampered_plan_json(plan, digest="0" * 64)
+    with pytest.raises(DemoCanaryError, match="plan_artifact_digest_mismatch"):
+        load_canonical_demo_order_plan(tampered)
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_rejects_blank_embedded_digest() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    tampered = _tampered_plan_json(plan, digest="")
+    with pytest.raises(DemoCanaryError, match="invalid_plan_schema"):
+        load_canonical_demo_order_plan(tampered)
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_rejects_missing_field() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    payload = json.loads(plan.to_json())
+    del payload["notional"]
+    changed = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    with pytest.raises(DemoCanaryError, match="invalid_plan_schema"):
+        load_canonical_demo_order_plan(changed)
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_rejects_unexpected_field() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    tampered = _tampered_plan_json(plan, unexpected=True)
+    with pytest.raises(DemoCanaryError, match="invalid_plan_schema"):
+        load_canonical_demo_order_plan(tampered)
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_rejects_malformed_decimal() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    tampered = _tampered_plan_json(plan, quantity="not-a-number")
+    with pytest.raises(DemoCanaryError, match="invalid_plan_schema"):
+        load_canonical_demo_order_plan(tampered)
+
+
+@pytest.mark.asyncio
+async def test_canonical_plan_loader_rejects_boolean_numeric_field() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    tampered = _tampered_plan_json(plan, leverage=True)
+    with pytest.raises(DemoCanaryError, match="invalid_plan_schema"):
+        load_canonical_demo_order_plan(tampered)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_value", ["NaN", "Infinity", "-Infinity"])
+async def test_canonical_plan_loader_rejects_non_finite_decimal(
+    bad_value: str,
+) -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    tampered = _tampered_plan_json(plan, quantity=bad_value)
+    with pytest.raises(DemoCanaryError, match="invalid_plan_schema"):
+        load_canonical_demo_order_plan(tampered)
 
 
 @pytest.mark.asyncio

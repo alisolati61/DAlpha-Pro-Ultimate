@@ -315,14 +315,31 @@ hosts.
 canonical READY ExecutionIntent + supplied SHA-256
   -> current VST constraints, book, account, positions, leverage, orders
   -> immutable DemoOrderPlan + canonical digest
-  -> dry-run report (default; zero writes)
-  -> --execute + exact digest + typed deterministic client ID
+  -> dry-run report (default; zero writes) + persisted plan artifact
+  -> operator review of the persisted plan artifact and digest
+  -> --execute + --plan-file + --plan-digest + typed deterministic client ID
+  -> exact persisted plan reloaded byte-for-byte (never rebuilt)
+  -> fresh fail-closed revalidation, including a fresh order-book read
   -> one protected non-marketable LIMIT submission
   -> query by clientOrderId
   -> cancel once if open
   -> final query + external state reconciliation
   -> canonical sanitized report
 ```
+
+A dry run persists the exact `DemoOrderPlan` it built to
+`.operator-artifacts/demo-order-plans/<plan_digest>.json`; `--execute` loads
+that file back and validates its embedded digest, its binding to the supplied
+intent and to the readiness-selected host, and its expiry before comparing it
+to the operator-approved `--plan-digest`. Execution never calls
+`build_demo_order_plan`; it only ever reloads the persisted plan and revalidates
+current state against it. A watch report's own digest is not an execute
+approval digest -- the read-only `bingx_vst_watch_canary.py` rehearsal never
+calls `execute_demo_order_plan` and never emits an `--execute` command of its
+own. Fresh market reads immediately before submission remain mandatory: an
+approved plan whose limit has since become marketable is blocked by the
+unchanged marketability guard rather than submitted. Live trading remains
+prohibited.
 
 `BingXAsyncDemoOrderAdapter` composes the existing HTTP client and has no
 generic request, market-order, transfer, withdrawal, account-setting,

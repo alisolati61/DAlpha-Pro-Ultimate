@@ -50,8 +50,10 @@ not be used to bypass subsystem freeze rules.
 - [x] Enforce VST-only hosts, `LIMIT`/`GTC`, non-marketability, current
   precision/minimums, both protections, fixed 10-notional and 2x-leverage
   ceilings, no same-symbol position, and duplicate canary rejection.
-- [x] Require `--execute`, the exact rebuilt plan digest, and exact typed
-  `SUBMIT <clientOrderId>` approval before the only submission call.
+- [x] Require `--execute`, a persisted plan artifact reloaded byte-for-byte via
+  `--plan-file` (never rebuilt from the intent), the exact approved
+  `--plan-digest`, and exact typed `SUBMIT <clientOrderId>` approval before the
+  only submission call.
 - [x] Recheck deterministic client-ID absence, constraints, book
   non-marketability, same-symbol positions, leverage, position mode, and open
   entry orders after confirmation immediately before that submission.

@@ -541,6 +541,92 @@ def load_canonical_ready_intent(
     return intent, actual_digest
 
 
+_PLAN_TEXT_FIELDS = (
+    "intent_id",
+    "intent_digest",
+    "policy_id",
+    "constraints_snapshot_id",
+    "account_snapshot_id",
+    "market_snapshot_id",
+    "symbol",
+    "side",
+    "position_side",
+    "order_type",
+    "time_in_force",
+    "client_order_id",
+    "selected_host",
+    "digest",
+)
+_PLAN_DECIMAL_FIELDS = (
+    "quantity",
+    "limit_price",
+    "stop_loss",
+    "take_profit",
+    "notional",
+)
+_PLAN_INT_FIELDS = ("leverage", "expires_at_ms")
+_PLAN_FIELDS = frozenset(
+    _PLAN_TEXT_FIELDS + _PLAN_DECIMAL_FIELDS + _PLAN_INT_FIELDS
+    + ("planned_lifecycle_actions",)
+)
+
+
+def load_canonical_demo_order_plan(serialized: str) -> DemoOrderPlan:
+    """Load only the frozen model's exact canonical persisted ``DemoOrderPlan``.
+
+    This performs no network or write operation. ``DemoOrderPlan.__post_init__``
+    always recomputes the digest from the parsed fields and compares it to the
+    embedded one with ``hmac.compare_digest``; requiring the embedded digest to
+    already look like a sha256 hex string here closes the one path (a blank or
+    absent digest) that would otherwise skip that comparison.
+    """
+
+    if not isinstance(serialized, str):
+        raise DemoCanaryError("invalid_plan_schema")
+    normalized = serialized.strip()
+    try:
+        payload = json.loads(normalized)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise DemoCanaryError("invalid_plan_schema") from None
+    if not isinstance(payload, dict) or set(payload) != _PLAN_FIELDS:
+        raise DemoCanaryError("invalid_plan_schema")
+    try:
+        kwargs: dict[str, object] = {}
+        for name in _PLAN_TEXT_FIELDS:
+            value = payload[name]
+            if not isinstance(value, str):
+                raise ValueError
+            kwargs[name] = value
+        for name in _PLAN_INT_FIELDS:
+            value = payload[name]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError
+            kwargs[name] = value
+        for name in _PLAN_DECIMAL_FIELDS:
+            value = payload[name]
+            if not isinstance(value, str):
+                raise ValueError
+            kwargs[name] = Decimal(value)
+        actions = payload["planned_lifecycle_actions"]
+        if not isinstance(actions, list) or any(
+            not isinstance(item, str) for item in actions
+        ):
+            raise ValueError
+        kwargs["planned_lifecycle_actions"] = tuple(actions)
+        if not _is_sha256(kwargs["digest"]):
+            raise ValueError
+        plan = DemoOrderPlan(**kwargs)  # type: ignore[arg-type]
+    except ValueError as error:
+        if str(error) == "demo order plan digest is invalid":
+            raise DemoCanaryError("plan_artifact_digest_mismatch") from None
+        raise DemoCanaryError("invalid_plan_schema") from None
+    except (InvalidOperation, KeyError, OverflowError, TypeError):
+        raise DemoCanaryError("invalid_plan_schema") from None
+    if plan.to_json() != normalized:
+        raise DemoCanaryError("invalid_plan_schema")
+    return plan
+
+
 def deterministic_client_order_id(intent_id: str) -> str:
     if not isinstance(intent_id, str) or not intent_id.strip():
         raise DemoCanaryError("invalid_intent_contract")
@@ -1318,5 +1404,6 @@ __all__ = (
     "dry_run_report",
     "execute_demo_order_plan",
     "failed_report",
+    "load_canonical_demo_order_plan",
     "load_canonical_ready_intent",
 )

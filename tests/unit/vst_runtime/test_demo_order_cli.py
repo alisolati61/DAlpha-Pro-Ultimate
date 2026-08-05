@@ -34,10 +34,10 @@ from src.vst_runtime.models import RemoteOrder, RemoteOrderStatus
 NOW = 2_000_000_000_000
 
 
-def _intent() -> ExecutionIntent:
+def _intent(intent_id: str = "intent-canary") -> ExecutionIntent:
     quantity = Decimal("0.01")
     return ExecutionIntent(
-        intent_id="intent-canary",
+        intent_id=intent_id,
         decision_id="decision-canary",
         status=IntentStatus.READY,
         symbol="BTC-USDT",
@@ -76,17 +76,24 @@ def _intent() -> ExecutionIntent:
     )
 
 
-def _write_intent(tmp_path: Path) -> tuple[Path, str]:
-    serialized = _intent().to_json()
-    path = tmp_path / "intent.json"
+def _write_intent(
+    tmp_path: Path, *, intent_id: str = "intent-canary"
+) -> tuple[Path, str]:
+    serialized = _intent(intent_id).to_json()
+    path = tmp_path / f"{intent_id}.json"
     path.write_text(serialized, encoding="utf-8")
     return path, hashlib.sha256(serialized.encode()).hexdigest()
 
 
 class ReadinessFake:
-    def __init__(self, *, server_time: int = NOW) -> None:
+    def __init__(
+        self,
+        *,
+        server_time: int = NOW,
+        selected_host: str = "https://open-api-vst.bingx.com",
+    ) -> None:
         self.server_time = server_time
-        self.selected_host = "https://open-api-vst.bingx.com"
+        self.selected_host = selected_host
         self.calls: list[str] = []
         self.closed = False
 
@@ -215,11 +222,57 @@ class DemoFake:
         self.closed = True
 
 
+class BookDemoFake(DemoFake):
+    """A DemoFake whose order book can be pinned to simulate a moved market."""
+
+    def __init__(self, best_bid: str, best_ask: str) -> None:
+        super().__init__()
+        self._best_bid = Decimal(best_bid)
+        self._best_ask = Decimal(best_ask)
+
+    async def fetch_orderbook(self, symbol: str) -> DemoTopOfBook:
+        self.calls.append("orderbook")
+        return DemoTopOfBook(symbol, self._best_bid, self._best_ask, "book-b")
+
+
 def _credentials(prompt: str) -> str:
     return {
         "BingX VST API key: ": "hidden-key",
         "BingX VST API secret: ": "hidden-secret",
     }[prompt]
+
+
+def _persist_plan(
+    tmp_path: Path,
+    *,
+    intent_path: Path,
+    intent_digest: str,
+    clock: int = NOW,
+) -> tuple[Path, dict[str, object]]:
+    """Run one real dry run and return the persisted plan's path and fields."""
+
+    artifact_root = tmp_path / ".operator-artifacts"
+    output: list[str] = []
+    assert (
+        command.main(
+            ["--intent-file", str(intent_path), "--intent-digest", intent_digest],
+            credential_provider=_credentials,
+            readiness_provider=lambda _: ReadinessFake(server_time=clock),
+            demo_transport_provider=lambda _configuration, _host: DemoFake(),
+            output=output.append,
+            clock_ms=lambda: clock,
+            artifact_root=artifact_root,
+        )
+        == 0
+    )
+    plan = json.loads(output[0])["plan"]
+    plan_file = (
+        artifact_root
+        / command._PLAN_ARTIFACT_DIRECTORY_NAME
+        / f"{plan['digest']}.json"
+    )
+    assert plan_file.is_file()
+    return plan_file, plan
 
 
 def test_default_cli_is_dry_run_hidden_and_zero_write(tmp_path: Path) -> None:
@@ -240,6 +293,7 @@ def test_default_cli_is_dry_run_hidden_and_zero_write(tmp_path: Path) -> None:
         demo_transport_provider=lambda _configuration, _host: demo,
         output=output.append,
         clock_ms=lambda: NOW,
+        artifact_root=tmp_path / ".operator-artifacts",
     ) == 0
     report = json.loads(output[0])
     assert report["status"] == "DRY_RUN_READY"
@@ -248,7 +302,7 @@ def test_default_cli_is_dry_run_hidden_and_zero_write(tmp_path: Path) -> None:
     assert "cancel" not in demo.calls
     assert readiness.closed and demo.closed
     assert prompts == ["BingX VST API key: ", "BingX VST API secret: "]
-    rendered = output[0] + repr(report)
+    rendered = "".join(output) + repr(report)
     assert "hidden-key" not in rendered
     assert "hidden-secret" not in rendered
     for forbidden in (
@@ -300,6 +354,7 @@ def test_readiness_failure_prevents_demo_composition_and_write(tmp_path: Path) -
         demo_transport_provider=lambda _configuration, _host: calls.append("demo"),  # type: ignore[arg-type,return-value]
         output=output.append,
         clock_ms=lambda: NOW,
+        artifact_root=tmp_path / ".operator-artifacts",
     ) == 2
     assert calls == []
     assert readiness.closed
@@ -337,6 +392,7 @@ def test_blank_credentials_fail_before_any_transport(tmp_path: Path) -> None:
             demo_transport_provider=demo_provider,  # type: ignore[arg-type]
             output=output.append,
             clock_ms=lambda: NOW,
+            artifact_root=tmp_path / ".operator-artifacts",
         ) == 2
         assert calls == []
         assert json.loads(output[0])["reason_codes"] == ["credential_required"]
@@ -371,58 +427,18 @@ def test_plan_failure_closes_both_clients_without_write(tmp_path: Path) -> None:
         demo_transport_provider=lambda _configuration, _host: demo,
         output=output.append,
         clock_ms=lambda: NOW,
+        artifact_root=tmp_path / ".operator-artifacts",
     ) == 2
     assert readiness.closed and demo.closed
     assert "submit" not in demo.calls and "cancel" not in demo.calls
     assert json.loads(output[0])["reason_codes"] == ["unsupported_symbol"]
 
 
-def test_execute_requires_rebuilt_digest_before_prompt_or_write(
-    tmp_path: Path,
-) -> None:
-    path, digest = _write_intent(tmp_path)
-    readiness = ReadinessFake()
-    demo = DemoFake()
-    calls: list[str] = []
-    output: list[str] = []
-
-    assert command.main(
-        [
-            "--intent-file",
-            str(path),
-            "--intent-digest",
-            digest,
-            "--execute",
-            "--plan-digest",
-            "0" * 64,
-        ],
-        credential_provider=_credentials,
-        confirmation_provider=lambda _: calls.append("confirm") or "yes",
-        readiness_provider=lambda _: readiness,
-        demo_transport_provider=lambda _configuration, _host: demo,
-        output=output.append,
-        clock_ms=lambda: NOW,
-    ) == 2
-    assert calls == []
-    assert "submit" not in demo.calls
-    assert demo.closed
-    assert json.loads(output[0])["reason_codes"] == ["plan_digest_mismatch"]
-
-
 def test_exact_two_step_execution_submits_once_and_closes(tmp_path: Path) -> None:
-    path, intent_digest = _write_intent(tmp_path)
-    dry_output: list[str] = []
-    assert command.main(
-        ["--intent-file", str(path), "--intent-digest", intent_digest],
-        credential_provider=_credentials,
-        readiness_provider=lambda _: ReadinessFake(),
-        demo_transport_provider=lambda _configuration, _host: DemoFake(),
-        output=dry_output.append,
-        clock_ms=lambda: NOW,
-    ) == 0
-    dry = json.loads(dry_output[0])
-    plan_digest = dry["plan"]["digest"]
-    client_id = dry["plan"]["client_order_id"]
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file, plan = _persist_plan(
+        tmp_path, intent_path=intent_path, intent_digest=digest
+    )
 
     readiness = ReadinessFake()
     demo = DemoFake()
@@ -430,15 +446,17 @@ def test_exact_two_step_execution_submits_once_and_closes(tmp_path: Path) -> Non
     assert command.main(
         [
             "--intent-file",
-            str(path),
+            str(intent_path),
             "--intent-digest",
-            intent_digest,
+            digest,
             "--execute",
+            "--plan-file",
+            str(plan_file),
             "--plan-digest",
-            plan_digest,
+            plan["digest"],
         ],
         credential_provider=_credentials,
-        confirmation_provider=lambda _: f"SUBMIT {client_id}",
+        confirmation_provider=lambda _: f"SUBMIT {plan['client_order_id']}",
         readiness_provider=lambda _: readiness,
         demo_transport_provider=lambda _configuration, _host: demo,
         output=execute_output.append,
@@ -449,10 +467,413 @@ def test_exact_two_step_execution_submits_once_and_closes(tmp_path: Path) -> Non
     assert report["transitions"] == ["SUBMITTED", "CANCELLED", "RECONCILED"]
     assert demo.calls.count("submit") == 1
     assert demo.calls.count("cancel") == 1
-    # Plan preflight, immediate pre-submit duplicate guard, post-submit, and
-    # post-cancel authoritative reads.
-    assert demo.calls.count("query") == 4
+    # Execute loads the persisted plan rather than rebuilding it, so there is
+    # no plan-preflight query here: only the immediate pre-submit duplicate
+    # guard, the post-submit query, and the post-cancel query.
+    assert demo.calls.count("query") == 3
     assert readiness.closed and demo.closed
+
+
+def test_execute_blocks_when_plan_digest_missing_before_any_composition(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            "unused-intent.json",
+            "--intent-digest",
+            "0" * 64,
+            "--execute",
+            "--plan-file",
+            str(tmp_path / "unused-plan.json"),
+        ],
+        credential_provider=lambda _prompt: calls.append("credential") or "unused",
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: calls.append("readiness"),  # type: ignore[arg-type,return-value]
+        demo_transport_provider=lambda *_: calls.append("demo"),  # type: ignore[arg-type,return-value]
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["approved_plan_digest_required"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert calls == []
+    assert confirm_calls == []
+
+
+def test_execute_blocks_when_plan_file_missing_before_any_composition(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            "unused-intent.json",
+            "--intent-digest",
+            "0" * 64,
+            "--execute",
+            "--plan-digest",
+            "0" * 64,
+        ],
+        credential_provider=lambda _prompt: calls.append("credential") or "unused",
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: calls.append("readiness"),  # type: ignore[arg-type,return-value]
+        demo_transport_provider=lambda *_: calls.append("demo"),  # type: ignore[arg-type,return-value]
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["plan_file_required"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert calls == []
+    assert confirm_calls == []
+
+
+def test_execute_blocks_on_invalid_plan_schema_before_transport(
+    tmp_path: Path,
+) -> None:
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file = tmp_path / "malformed-plan.json"
+    plan_file.write_text("{not-json", encoding="utf-8")
+
+    demo_calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            str(intent_path),
+            "--intent-digest",
+            digest,
+            "--execute",
+            "--plan-file",
+            str(plan_file),
+            "--plan-digest",
+            "0" * 64,
+        ],
+        credential_provider=_credentials,
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: ReadinessFake(),
+        demo_transport_provider=lambda *_: demo_calls.append("demo") or DemoFake(),
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["invalid_plan_schema"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert demo_calls == []
+    assert confirm_calls == []
+
+
+def test_execute_blocks_on_tampered_plan_artifact_digest_before_transport(
+    tmp_path: Path,
+) -> None:
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file, plan = _persist_plan(
+        tmp_path, intent_path=intent_path, intent_digest=digest
+    )
+    payload = json.loads(plan_file.read_text(encoding="utf-8"))
+    payload["digest"] = "0" * 64
+    tampered_file = tmp_path / "tampered-plan.json"
+    tampered_file.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+    demo_calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            str(intent_path),
+            "--intent-digest",
+            digest,
+            "--execute",
+            "--plan-file",
+            str(tampered_file),
+            "--plan-digest",
+            plan["digest"],
+        ],
+        credential_provider=_credentials,
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: ReadinessFake(),
+        demo_transport_provider=lambda *_: demo_calls.append("demo") or DemoFake(),
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["plan_artifact_digest_mismatch"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert demo_calls == []
+    assert confirm_calls == []
+
+
+def test_execute_blocks_on_plan_intent_mismatch_before_transport(
+    tmp_path: Path,
+) -> None:
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file, plan = _persist_plan(
+        tmp_path, intent_path=intent_path, intent_digest=digest
+    )
+    other_path, other_digest = _write_intent(tmp_path, intent_id="intent-canary-other")
+
+    demo_calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            str(other_path),
+            "--intent-digest",
+            other_digest,
+            "--execute",
+            "--plan-file",
+            str(plan_file),
+            "--plan-digest",
+            plan["digest"],
+        ],
+        credential_provider=_credentials,
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: ReadinessFake(),
+        demo_transport_provider=lambda *_: demo_calls.append("demo") or DemoFake(),
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["plan_intent_mismatch"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert demo_calls == []
+    assert confirm_calls == []
+
+
+def test_execute_blocks_on_plan_host_mismatch_before_transport(
+    tmp_path: Path,
+) -> None:
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file, plan = _persist_plan(
+        tmp_path, intent_path=intent_path, intent_digest=digest
+    )
+
+    demo_calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            str(intent_path),
+            "--intent-digest",
+            digest,
+            "--execute",
+            "--plan-file",
+            str(plan_file),
+            "--plan-digest",
+            plan["digest"],
+        ],
+        credential_provider=_credentials,
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: ReadinessFake(
+            selected_host="https://open-api-vst.bingx.pro"
+        ),
+        demo_transport_provider=lambda *_: demo_calls.append("demo") or DemoFake(),
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["plan_host_mismatch"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert demo_calls == []
+    assert confirm_calls == []
+
+
+def test_execute_blocks_on_expired_plan_before_transport(tmp_path: Path) -> None:
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file, plan = _persist_plan(
+        tmp_path, intent_path=intent_path, intent_digest=digest
+    )
+    past_expiry = int(plan["expires_at_ms"]) + 1
+
+    demo_calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            str(intent_path),
+            "--intent-digest",
+            digest,
+            "--execute",
+            "--plan-file",
+            str(plan_file),
+            "--plan-digest",
+            plan["digest"],
+        ],
+        credential_provider=_credentials,
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: ReadinessFake(server_time=past_expiry),
+        demo_transport_provider=lambda *_: demo_calls.append("demo") or DemoFake(),
+        output=output.append,
+        clock_ms=lambda: past_expiry,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["plan_expired"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert demo_calls == []
+    assert confirm_calls == []
+
+
+def test_execute_blocks_on_plan_digest_mismatch_before_prompt_or_write(
+    tmp_path: Path,
+) -> None:
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file, plan = _persist_plan(
+        tmp_path, intent_path=intent_path, intent_digest=digest
+    )
+    assert plan["digest"] != "0" * 64
+
+    demo_calls: list[str] = []
+    confirm_calls: list[str] = []
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            str(intent_path),
+            "--intent-digest",
+            digest,
+            "--execute",
+            "--plan-file",
+            str(plan_file),
+            "--plan-digest",
+            "0" * 64,
+        ],
+        credential_provider=_credentials,
+        confirmation_provider=lambda prompt: confirm_calls.append(prompt) or "unused",
+        readiness_provider=lambda _: ReadinessFake(),
+        demo_transport_provider=lambda *_: demo_calls.append("demo") or DemoFake(),
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+    assert exit_code == 2
+    report = json.loads(output[0])
+    assert report["status"] == "BLOCKED"
+    assert report["reason_codes"] == ["plan_digest_mismatch"]
+    assert report["order_id"] is None
+    assert report["remote_status"] is None
+    assert Decimal(str(report["filled_quantity"])) == 0
+    assert demo_calls == []
+    assert confirm_calls == []
+
+
+@pytest.mark.parametrize(
+    ("book_b_bid", "book_b_ask", "expect_marketable"),
+    [
+        ("101", "102", False),
+        ("95", "99", True),
+    ],
+)
+def test_execute_revalidates_fresh_book_without_rebuilding_persisted_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    book_b_bid: str,
+    book_b_ask: str,
+    expect_marketable: bool,
+) -> None:
+    """Prove the exact moving-market sequence for a persisted, approved plan.
+
+    Plan A is built and persisted against order book A. Execution then loads
+    that exact persisted plan (never rebuilding it) and revalidates against a
+    freshly read order book B. Plan A's bytes on disk, and therefore its
+    digest and market_snapshot_id, are never touched by the execute attempt.
+    """
+
+    intent_path, digest = _write_intent(tmp_path)
+    plan_file, plan_a = _persist_plan(
+        tmp_path, intent_path=intent_path, intent_digest=digest
+    )
+    plan_bytes_before = plan_file.read_bytes()
+
+    build_calls: list[str] = []
+    original_build = command.build_demo_order_plan
+
+    async def guarded_build(*args: object, **kwargs: object) -> object:
+        build_calls.append("called")
+        return await original_build(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(command, "build_demo_order_plan", guarded_build)
+
+    execute_demo = BookDemoFake(book_b_bid, book_b_ask)
+    readiness = ReadinessFake()
+    output: list[str] = []
+    exit_code = command.main(
+        [
+            "--intent-file",
+            str(intent_path),
+            "--intent-digest",
+            digest,
+            "--execute",
+            "--plan-file",
+            str(plan_file),
+            "--plan-digest",
+            plan_a["digest"],
+        ],
+        credential_provider=_credentials,
+        confirmation_provider=lambda _: f"SUBMIT {plan_a['client_order_id']}",
+        readiness_provider=lambda _: readiness,
+        demo_transport_provider=lambda _configuration, _host: execute_demo,
+        output=output.append,
+        clock_ms=lambda: NOW,
+    )
+
+    # Plan A on disk is byte-identical, so its digest and market_snapshot_id
+    # were never regenerated by the execute attempt.
+    assert plan_file.read_bytes() == plan_bytes_before
+    assert build_calls == []
+    assert "orderbook" in execute_demo.calls
+
+    report = json.loads(output[0])
+    if expect_marketable:
+        assert exit_code == 2
+        assert report["status"] == "BLOCKED"
+        assert report["reason_codes"] == ["marketable_limit_price"]
+        assert "submit" not in execute_demo.calls
+    else:
+        assert exit_code == 0
+        assert report["status"] == "RECONCILED"
+        assert execute_demo.calls.count("submit") == 1
+    assert readiness.closed and execute_demo.closed
 
 
 def test_parser_has_no_credentials_or_direct_order_bypass_flags() -> None:

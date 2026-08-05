@@ -359,9 +359,25 @@ any later Phase 1I-1 execution remains a separate operator-controlled event.
 
 ## BingX VST Demo order canary
 
-The canary is an explicitly manual tool. Its default dry run performs
-readiness and authoritative contract, order-book, account, leverage, position,
-and order-history reads, but no exchange write:
+The canary is an explicitly manual tool. The supported operator sequence is:
+
+```text
+scripts/bingx_vst_watch_canary.py (optional, read-only)
+  -> canonical READY intent
+  -> bingx_vst_demo_order.py dry-run
+  -> persisted immutable DemoOrderPlan artifact
+  -> operator review
+  -> bingx_vst_demo_order.py --execute with --plan-file and --plan-digest
+  -> fresh fail-closed revalidation
+  -> at most one VST Demo submission
+```
+
+Its default dry run performs readiness and authoritative contract, order-book,
+account, leverage, position, and order-history reads, but no exchange write. A
+successful dry run persists the immutable `DemoOrderPlan` it built to
+`.operator-artifacts/demo-order-plans/<plan_digest>.json` and prints that
+artifact path together with the plan digest and the exact next `--execute`
+command:
 
 ```powershell
 python scripts/bingx_vst_demo_order.py `
@@ -370,8 +386,10 @@ python scripts/bingx_vst_demo_order.py `
   --host https://open-api-vst.bingx.com
 ```
 
-After reviewing the canonical `DRY_RUN_READY` report, execution requires the
-newly rebuilt plan to have the exact approved digest:
+After reviewing the canonical `DRY_RUN_READY` report and the persisted plan
+artifact, execution loads that exact plan file back byte-for-byte -- it never
+rebuilds the plan from the intent -- and requires its digest to match the
+approved digest supplied on the command line:
 
 ```powershell
 python scripts/bingx_vst_demo_order.py `
@@ -379,6 +397,7 @@ python scripts/bingx_vst_demo_order.py `
   --intent-digest "<INTENT_SHA256>" `
   --host https://open-api-vst.bingx.com `
   --execute `
+  --plan-file "<PLAN_ARTIFACT_PATH>" `
   --plan-digest "<DRY_RUN_PLAN_DIGEST>"
 ```
 
@@ -389,25 +408,36 @@ credential flags or loads environment/dotenv values. The safe sequence is:
 1. obtain a canonical `READY` intent through the approved decision, frozen-risk,
    and execution-intent pipeline;
 2. run dry mode and inspect the symbol, exact normalized fields, VST host,
-   bounds, expiration, client ID, and plan digest;
+   bounds, expiration, client ID, and the persisted plan artifact/digest;
 3. independently confirm that the account has no same-symbol position and that
    leverage is already within the canary cap;
-4. rerun with `--execute` and the reviewed digest, then type the exact client-ID
-   confirmation;
+4. rerun with `--execute`, the persisted plan file, and the reviewed digest,
+   then type the exact client-ID confirmation;
 5. inspect the final query/cancel/reconciliation report.
 
-The write is one protected `LIMIT` submission with automatic write retries
-disabled. Immediately before that write, the tool repeats the deterministic
-client-ID absence check and revalidates constraints, the latest book,
-same-symbol positions, leverage, position mode, and open entry orders. It then
-queries by client ID, cancels once if still open, queries again, and reconciles
-current state. An ambiguous submit,
-including an unusable successful response, is resolved only by client-ID query
-and is never blindly resubmitted. Any partial or full fill activates the
-report's fail-closed kill-switch state and requires manual account inspection;
-the tool never auto-flattens. Do not rerun after an ambiguous or unexpected-fill
-report until the VST account has been reconciled. Live hosts and Live trading
-remain unsupported.
+Loading the plan file back revalidates its own embedded digest and confirms it
+belongs to the supplied intent, to the readiness-selected host, and has not
+expired, before comparing it to the operator-approved digest -- each check
+blocks before any credential prompt for typed confirmation or any remote
+write. The write is one protected `LIMIT` submission with automatic write
+retries disabled. Immediately before that write, the tool repeats the
+deterministic client-ID absence check and revalidates constraints, a freshly
+read latest book, same-symbol positions, leverage, position mode, and open
+entry orders; an approved plan whose limit has since become marketable is
+blocked by this unchanged guard rather than submitted. It then queries by
+client ID, cancels once if still open, queries again, and reconciles current
+state. An ambiguous submit, including an unusable successful response, is
+resolved only by client-ID query and is never blindly resubmitted. Any partial
+or full fill activates the report's fail-closed kill-switch state and requires
+manual account inspection; the tool never auto-flattens. Do not rerun after an
+ambiguous or unexpected-fill report until the VST account has been reconciled.
+Live hosts and Live trading remain unsupported.
+
+The optional `bingx_vst_watch_canary.py` rehearsal is read-only end to end: it
+never calls `execute_demo_order_plan`, never performs a write, and its own
+report digest is never a valid `--plan-digest`. It only ever points the
+operator toward the separate `bingx_vst_demo_order.py` dry-run stage above,
+which is the sole source of a persisted, executable plan artifact.
 
 ## Tests and quality gates
 
