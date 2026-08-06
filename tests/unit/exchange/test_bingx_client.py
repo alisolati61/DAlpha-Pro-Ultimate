@@ -10,6 +10,7 @@ import ssl
 from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
+from unittest import mock
 from urllib.parse import parse_qsl
 
 import httpx
@@ -842,3 +843,119 @@ def test_injected_http_client_is_not_closed_by_wrapper() -> None:
 
     assert async_client.is_closed is False
     run(async_client.aclose())
+
+
+def _no_op_handler(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"code": 0, "data": {}}, request=request)
+
+
+# Captured before any patching so the mocked replacements below can build
+# real objects without recursing into themselves (both `ssl` and `httpx` are
+# shared module objects, so `mock.patch("...ssl.create_default_context", ...)`
+# rebinds the attribute globally for the duration of the patch).
+_REAL_CREATE_DEFAULT_CONTEXT = ssl.create_default_context
+_REAL_ASYNC_CLIENT = httpx.AsyncClient
+
+
+def test_lazy_client_uses_system_trust_context_without_cafile() -> None:
+    """The internally-built client must verify TLS via the OS trust store.
+
+    httpx 0.28's default ``verify=True`` resolves to
+    ``ssl.create_default_context(cafile=certifi.where())``, which fails on
+    this operator's Windows trust path. Passing an explicit
+    ``ssl.create_default_context()`` (no cafile) uses the OS certificate
+    store instead, while keeping verification fully enabled.
+    """
+
+    client = BingXHttpClient(rate_limiter=unlimited_rate_limiter())
+
+    created_contexts: list[ssl.SSLContext] = []
+
+    def _record_context(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        context = _REAL_CREATE_DEFAULT_CONTEXT(*args, **kwargs)
+        created_contexts.append(context)
+        return context
+
+    captured_kwargs: dict[str, Any] = {}
+
+    def _fake_async_client(**kwargs: Any) -> httpx.AsyncClient:
+        captured_kwargs.update(kwargs)
+        return _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(_no_op_handler))
+
+    with (
+        mock.patch(
+            "src.exchange.bingx_client.ssl.create_default_context",
+            side_effect=_record_context,
+        ) as create_context,
+        mock.patch(
+            "src.exchange.bingx_client.httpx.AsyncClient",
+            side_effect=_fake_async_client,
+        ) as async_client_ctor,
+    ):
+        run(client._get_client())
+
+    create_context.assert_called_once_with()
+    async_client_ctor.assert_called_once()
+
+    assert len(created_contexts) == 1
+    verify_context = captured_kwargs["verify"]
+    assert verify_context is created_contexts[0]
+    assert isinstance(verify_context, ssl.SSLContext)
+    assert verify_context.check_hostname is True
+    assert verify_context.verify_mode == ssl.CERT_REQUIRED
+
+    assert captured_kwargs["follow_redirects"] is False
+    assert captured_kwargs["timeout"] == httpx.Timeout(client.timeout)
+    assert captured_kwargs["limits"] == httpx.Limits(
+        max_connections=100,
+        max_keepalive_connections=20,
+    )
+
+    run(client.close())
+
+
+def test_injected_http_client_bypasses_lazy_construction() -> None:
+    async_client = _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(_no_op_handler))
+    client = BingXHttpClient(
+        http_client=async_client,
+        rate_limiter=unlimited_rate_limiter(),
+    )
+
+    with mock.patch(
+        "src.exchange.bingx_client.httpx.AsyncClient",
+    ) as async_client_ctor:
+        resolved = run(client._get_client())
+
+    async_client_ctor.assert_not_called()
+    assert resolved is async_client
+
+    run(client.close())
+    assert async_client.is_closed is False
+    run(async_client.aclose())
+
+
+def test_get_client_is_memoized_across_repeated_calls() -> None:
+    client = BingXHttpClient(rate_limiter=unlimited_rate_limiter())
+
+    def _fake_async_client(**kwargs: Any) -> httpx.AsyncClient:
+        return _REAL_ASYNC_CLIENT(transport=httpx.MockTransport(_no_op_handler))
+
+    with (
+        mock.patch(
+            "src.exchange.bingx_client.ssl.create_default_context",
+            side_effect=_REAL_CREATE_DEFAULT_CONTEXT,
+        ) as create_context,
+        mock.patch(
+            "src.exchange.bingx_client.httpx.AsyncClient",
+            side_effect=_fake_async_client,
+        ) as async_client_ctor,
+    ):
+        first = run(client._get_client())
+        second = run(client._get_client())
+        third = run(client._get_client())
+
+    assert first is second is third
+    create_context.assert_called_once_with()
+    async_client_ctor.assert_called_once()
+
+    run(client.close())

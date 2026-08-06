@@ -1081,6 +1081,7 @@ class BingXHttpClient:
                         max_keepalive_connections=20,
                     ),
                     follow_redirects=False,
+                    verify=ssl.create_default_context(),
                 )
 
             return self._client
