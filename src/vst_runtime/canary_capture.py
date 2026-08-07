@@ -49,7 +49,8 @@ CAPTURE_POLICY_VERSION = "bingx-vst-canary-input-policy-v1"
 CAPTURE_DIRECTORY_NAME = "canary-inputs"
 CAPTURE_STATUS = "CAPTURED"
 CANARY_SYMBOL = "BTC-USDT"
-CANARY_TIMEFRAME = "1m"
+CANARY_TIMEFRAME = "3m"
+CANARY_CANDLE_INTERVAL_MS = 180_000
 _CANDLE_LIMIT = 100
 _MINIMUM_COMPLETED_CANDLES = 3
 _INCOME_LIMIT = 1_000
@@ -634,9 +635,9 @@ def _market_values(
     for index, item in enumerate(completed):
         open_ms = open_times[index]
         close_ms = _effective_candle_close_ms(item)
-        if close_ms < open_ms or close_ms >= open_ms + 60_000:
+        if close_ms < open_ms or close_ms >= open_ms + CANARY_CANDLE_INTERVAL_MS:
             raise CanaryCaptureError("incomplete_candle")
-        if index and open_ms - open_times[index - 1] != 60_000:
+        if index and open_ms - open_times[index - 1] != CANARY_CANDLE_INTERVAL_MS:
             raise CanaryCaptureError("candle_sequence_invalid")
     latest_open_ms = open_times[-1]
     policy = DEFAULT_DEMO_CANARY_POLICY
@@ -686,15 +687,15 @@ def _market_values(
 
 
 def _effective_candle_close_ms(candle: BingXKline) -> int:
-    """Resolve only the proven one-minute mapping ambiguity at capture."""
+    """Resolve only the proven three-minute mapping ambiguity at capture."""
 
     open_ms = _datetime_ms(candle.open_time)
     close_ms = _datetime_ms(candle.close_time)
     if close_ms == open_ms:
         # The frozen client maps BingX's mapping-form ``time`` field to both
         # timestamps when no explicit closeTime is present.  For this fixed
-        # one-minute canary boundary, the candle closes at the final millisecond.
-        return open_ms + 59_999
+        # three-minute canary boundary, the candle closes at the final millisecond.
+        return open_ms + CANARY_CANDLE_INTERVAL_MS - 1
     return close_ms
 
 

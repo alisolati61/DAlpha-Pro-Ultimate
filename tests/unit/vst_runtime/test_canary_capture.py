@@ -92,7 +92,7 @@ def _kline(
     close: str,
 ) -> BingXKline:
     opened = datetime.fromtimestamp(NOW_MS / 1_000, UTC) - timedelta(
-        minutes=minutes_before
+        minutes=minutes_before * 3
     )
     return BingXKline(
         open_time=opened,
@@ -101,7 +101,7 @@ def _kline(
         low=Decimal(low),
         close=Decimal(close),
         volume=Decimal("1"),
-        close_time=opened + timedelta(milliseconds=59_999),
+        close_time=opened + timedelta(milliseconds=179_999),
         quote_volume=Decimal("100"),
         trades_count=1,
         taker_buy_volume=Decimal("0.5"),
@@ -156,7 +156,7 @@ class CaptureFake:
     async def fetch_candles(
         self, symbol: str, timeframe: str, limit: int
     ) -> Sequence[BingXKline]:
-        assert (symbol, timeframe, limit) == ("BTC-USDT", "1m", 100)
+        assert (symbol, timeframe, limit) == ("BTC-USDT", "3m", 100)
         self.ledger.append("capture.candles")
         return self.candles
 
@@ -451,7 +451,7 @@ async def test_malformed_stale_duplicate_or_incomplete_candles_fail_closed(
     assert not (tmp_path / ".operator-artifacts").exists()
 
 
-def test_mapping_time_candle_is_incomplete_until_the_one_minute_close() -> None:
+def test_mapping_time_candle_is_incomplete_until_the_three_minute_close() -> None:
     orderbook = DemoTopOfBook(
         "BTC-USDT",
         Decimal("99"),
@@ -468,7 +468,7 @@ def test_mapping_time_candle_is_incomplete_until_the_one_minute_close() -> None:
     ambiguous = replace(current, close_time=current.open_time)
     explicit = replace(
         current,
-        close_time=current.open_time + timedelta(milliseconds=59_999),
+        close_time=current.open_time + timedelta(milliseconds=179_999),
     )
     history = (
         _kline(2, open_price="98", high="100", low="97", close="99"),
@@ -480,16 +480,16 @@ def test_mapping_time_candle_is_incomplete_until_the_one_minute_close() -> None:
             _market_values(
                 (*history, last),
                 orderbook,
-                capture_time_ms=NOW_MS + 59_998,
-                validation_time_ms=NOW_MS + 59_998,
+                capture_time_ms=NOW_MS + 179_998,
+                validation_time_ms=NOW_MS + 179_998,
             )
         assert caught.value.reason_code == "insufficient_completed_candles"
 
     values, _attestation = _market_values(
         (*history, ambiguous),
         orderbook,
-        capture_time_ms=NOW_MS + 59_999,
-        validation_time_ms=NOW_MS + 59_999,
+        capture_time_ms=NOW_MS + 179_999,
+        validation_time_ms=NOW_MS + 179_999,
     )
     rows = values["events"][0]["payload"]["candles"]  # type: ignore[index]
     assert len(rows) == 3

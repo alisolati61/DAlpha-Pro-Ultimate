@@ -43,7 +43,7 @@ manual VST read-only input capture
   -> stop
 
 bounded foreground VST watcher
-  -> evaluate the latest settled candle, then newly closed one-minute candles
+  -> evaluate the latest settled candle, then newly closed three-minute candles
   -> the same capture + preparation + dry-run boundaries
   -> stop at DRY_RUN_READY, a fail-closed blocker, interruption, or the limit
 ```

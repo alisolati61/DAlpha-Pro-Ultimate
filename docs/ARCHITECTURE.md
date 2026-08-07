@@ -162,7 +162,7 @@ cleanup uncertainty blocks the operation.
 The optional `bingx_vst_watch_canary.py` composition remains manual and
 foreground. It prompts once, uses one top-level `asyncio.run`, immediately
 evaluates the latest settled candle, and then waits only for newly closed
-one-minute candles. It is capped at 1–10 attempts (default 5) and a monotonic
+three-minute candles. It is capped at 1–10 attempts (default 5) and a monotonic
 deadline. Each attempt reuses the existing readiness, capture, preparation,
 canonical-intent verification, current Demo reads, and dry-run-plan services.
 Only `decision_hold` and `marketable_limit_price` are retryable; every other

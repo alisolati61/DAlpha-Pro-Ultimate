@@ -72,9 +72,9 @@ Output = Callable[[str], None]
 
 _DEFAULT_ATTEMPTS = 5
 _MAX_ATTEMPTS = 10
-_CANDLE_INTERVAL_MS = 60_000
+_CANDLE_INTERVAL_MS = 180_000
 _CLOSE_SETTLEMENT_MS = 2_500
-_MAX_SECONDS_PER_ATTEMPT = 65
+_MAX_SECONDS_PER_ATTEMPT = 185
 _MAX_INPUT_BYTES = 1_000_000
 _HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _CAPTURE_INPUTS = {
@@ -241,7 +241,7 @@ async def watch_canary(
     progress: Output,
     local_kill_switch: KillSwitch,
 ) -> CanaryWatchReport:
-    """Run a finite foreground loop over newly closed one-minute candles."""
+    """Run a finite foreground loop over newly closed three-minute candles."""
 
     _attempt_limit(max_attempts)
     started = _monotonic_value(monotonic())

@@ -181,7 +181,7 @@ def test_default_demo_factory_passes_selected_host_by_keyword(
 
 
 @pytest.mark.asyncio
-async def test_scheduler_uses_latest_settled_boundary_without_burst_catchup() -> None:
+async def test_three_minute_scheduler_uses_latest_closed_boundary() -> None:
     fake_time = FakeTime()
     deadline = fake_time.monotonic() + 200
 
@@ -204,12 +204,12 @@ async def test_scheduler_uses_latest_settled_boundary_without_burst_catchup() ->
         deadline=deadline,
         after_boundary_ms=first,
     )
-    assert second == NOW_MS + 60_000
-    assert fake_time.delays == []
+    assert second == NOW_MS + 180_000
+    assert fake_time.delays == [97.5]
 
 
 @pytest.mark.asyncio
-async def test_hold_watch_is_bounded_and_samples_only_closed_minute_boundaries(
+async def test_hold_watch_is_bounded_and_samples_only_closed_three_minute_boundaries(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -254,8 +254,8 @@ async def test_hold_watch_is_bounded_and_samples_only_closed_minute_boundaries(
     )
     assert prepared == 3
     assert len(sampled_at) == 3
-    assert [value % 60_000 for value in sampled_at] == [10_000, 2_500, 2_500]
-    assert fake_time.delays == [52.5, 60.0]
+    assert [value % 180_000 for value in sampled_at] == [10_000, 2_500, 2_500]
+    assert fake_time.delays == [172.5, 180.0]
     assert [json.loads(item)["status"] for item in progress] == [
         "WAITING",
         "NO_ACTION",
@@ -365,7 +365,7 @@ async def test_marketable_limit_retries_at_next_boundary_then_succeeds(
     assert report.status == DemoOrderStatus.DRY_RUN_READY.value
     assert report.attempts == 2
     assert capture_calls == dry_calls == 2
-    assert fake_time.delays == [52.5]
+    assert fake_time.delays == [172.5]
     assert any(
         json.loads(item)["reason_codes"] == ["marketable_limit_price"]
         for item in progress
