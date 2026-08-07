@@ -33,9 +33,15 @@ _DEFAULT_ATTEMPTS = 3
 _MAX_ATTEMPTS = 10
 _CLOSE_SETTLEMENT_MS = 2_500
 _MAX_ARTIFACT_BYTES = 1_000_000
-_RETRYABLE = frozenset(
+_INTENT_RETRYABLE = frozenset(
     {
         "decision_hold",
+        "canary_stop_distance_unavailable",
+    }
+)
+
+_DRY_RUN_RETRYABLE = frozenset(
+    {
         "marketable_limit_price",
     }
 )
@@ -463,7 +469,7 @@ def main(
                 or intent_status != "READY"
             ):
                 if (
-                    intent_reasons & _RETRYABLE
+                    intent_reasons & _INTENT_RETRYABLE
                     and attempt < attempts
                 ):
                     _wait_for_next_candle(
@@ -526,7 +532,7 @@ def main(
                 or demo_status != "DRY_RUN_READY"
             ):
                 if (
-                    demo_reasons & _RETRYABLE
+                    demo_reasons & _DRY_RUN_RETRYABLE
                     and attempt < attempts
                 ):
                     _wait_for_next_candle(

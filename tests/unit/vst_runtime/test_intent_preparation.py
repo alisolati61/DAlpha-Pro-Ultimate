@@ -744,6 +744,36 @@ def test_exchange_minimum_above_canary_cap_stays_fail_closed(
     assert not directory.exists()
 
 
+def test_zero_stop_distance_is_specific_fail_closed_blocker(
+    tmp_path: Path,
+) -> None:
+    documents = canonical_documents()
+    documents["market"]["events"][0]["payload"]["candles"][-1] = [
+        timestamp(),
+        102,
+        103,
+        102,
+        102,
+        1,
+    ]
+
+    serialized = serialized_documents(documents)
+    directory = artifact_directory(tmp_path, "zero-stop")
+
+    with pytest.raises(IntentPreparationError) as caught:
+        prepare_demo_canary_intent(
+            **preparation_arguments(serialized),
+            artifact_directory=directory,
+            clock_ms=lambda: NOW_MS,
+        )
+
+    assert (
+        caught.value.reason_code
+        == "canary_stop_distance_unavailable"
+    )
+    assert not directory.exists()
+
+
 def test_preparation_has_no_exchange_network_or_write_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

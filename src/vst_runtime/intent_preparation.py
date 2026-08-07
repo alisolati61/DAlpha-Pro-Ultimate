@@ -820,17 +820,49 @@ def _candidate_position_size(
             inputs.constraints.minimum_quantity,
             inputs.policy.execution,
         )
+    raw_entry = Decimal(str(proposal.entry_reference_price))
+    raw_stop = Decimal(str(proposal.stop_loss_candidate))
+
+    if (
+        raw_entry <= 0
+        or raw_stop <= 0
+        or not _has_valid_stop_geometry(
+            proposal.direction,
+            raw_entry,
+            raw_stop,
+        )
+    ):
+        raise IntentPreparationError(
+            "canary_stop_distance_unavailable"
+        )
+
     sizing = PositionSizer.calculate_position_size(
         balance=float(inputs.account.execution.equity),
         risk_percent=float(inputs.policy.execution.risk_percent),
-        entry_price=proposal.entry_reference_price,
-        stop_loss=proposal.stop_loss_candidate,
+        entry_price=float(raw_entry),
+        stop_loss=float(raw_stop),
     )
     raw_quantity = Decimal(str(sizing.position_size))
-    entry, stop = _normalized_entry_and_stop(proposal, inputs.constraints)
+
+    entry, stop = _normalized_entry_and_stop(
+        proposal,
+        inputs.constraints,
+    )
+
+    if (
+        entry <= 0
+        or stop <= 0
+        or not _has_valid_stop_geometry(
+            proposal.direction,
+            entry,
+            stop,
+        )
+    ):
+        raise IntentPreparationError(
+            "canary_stop_distance_unavailable"
+        )
+
     distance = abs(entry - stop)
-    if entry <= 0 or stop <= 0 or distance <= 0:
-        raise IntentPreparationError("canary_size_unavailable")
 
     normalized_sizing = PositionSizer.calculate_position_size(
         balance=float(inputs.account.execution.equity),
@@ -905,6 +937,18 @@ def _candidate_position_size(
     if normalized_quantity != quantity:
         raise IntentPreparationError("canary_size_unavailable")
     return _CanarySizing(quantity, execution_policy)
+
+
+def _has_valid_stop_geometry(
+    direction: ProposalDirection,
+    entry: Decimal,
+    stop: Decimal,
+) -> bool:
+    if direction is ProposalDirection.LONG:
+        return stop < entry
+    if direction is ProposalDirection.SHORT:
+        return stop > entry
+    return False
 
 
 def _normalized_entry_and_stop(

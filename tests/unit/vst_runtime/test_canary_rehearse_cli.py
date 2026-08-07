@@ -21,9 +21,18 @@ def test_parser_has_no_submission_flag() -> None:
         )
 
 
-def test_hold_retry_reaches_verified_dry_run(
+@pytest.mark.parametrize(
+    ("retry_reason", "retry_status"),
+    (
+        ("decision_hold", "NO_ACTION"),
+        ("canary_stop_distance_unavailable", "BLOCKED"),
+    ),
+)
+def test_intent_retry_reaches_verified_dry_run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    retry_reason: str,
+    retry_status: str,
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
@@ -94,8 +103,8 @@ def test_hold_retry_reaches_verified_dry_run(
             kwargs["output"](
                 json.dumps(
                     {
-                        "reason_codes": ["decision_hold"],
-                        "status": "NO_ACTION",
+                        "reason_codes": [retry_reason],
+                        "status": retry_status,
                     }
                 )
             )
