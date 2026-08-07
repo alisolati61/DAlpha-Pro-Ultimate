@@ -203,3 +203,23 @@ def test_hold_retry_reaches_verified_dry_run(
     assert "PLAN_CANONICAL_VERIFY=PASS" in output
     assert "ORDER_SUBMITTED=NO" in output
     assert "EXECUTE_USED=NO" in output
+
+
+def test_operator_launches_rehearsal_as_repo_module() -> None:
+    root = Path(__file__).resolve().parents[3]
+    operator = (
+        root / "tools" / "operator.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert '$Rehearsal = Join-Path' not in operator
+    assert '"scripts.bingx_vst_rehearse"' in operator
+
+    rehearsal_block = operator.split(
+        'if ($Action -eq "rehearse") {',
+        1,
+    )[1].split(
+        'Write-Host "Alpha Pro VST operator"',
+        1,
+    )[0]
+
+    assert '"-m"' in rehearsal_block

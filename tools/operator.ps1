@@ -13,7 +13,6 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $Watcher = Join-Path $Root "scripts\bingx_vst_watch_canary.py"
-$Rehearsal = Join-Path $Root "scripts\bingx_vst_rehearse.py"
 
 Set-Location $Root
 
@@ -48,7 +47,8 @@ if ($Action -eq "rehearse") {
     Write-Host "ORDER_SUBMISSION=DISABLED"
 
     & $Python `
-        $Rehearsal `
+        "-m" `
+        "scripts.bingx_vst_rehearse" `
         "--host" `
         "https://open-api-vst.bingx.pro" `
         "--attempts" `
