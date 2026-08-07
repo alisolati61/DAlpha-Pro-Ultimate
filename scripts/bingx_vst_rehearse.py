@@ -39,6 +39,12 @@ _RETRYABLE = frozenset(
         "marketable_limit_price",
     }
 )
+
+_CAPTURE_RETRYABLE = frozenset(
+    {
+        "stale_candles",
+    }
+)
 _INPUT_FILES = frozenset(
     {
         "market-input.json",
@@ -388,6 +394,17 @@ def main(
                 capture_code != 0
                 or capture_status != "CAPTURED"
             ):
+                if (
+                    capture_reasons & _CAPTURE_RETRYABLE
+                    and attempt < attempts
+                ):
+                    _wait_for_next_candle(
+                        clock_ms=clock,
+                        sleeper=sleeper,
+                        output=output,
+                    )
+                    continue
+
                 reason = (
                     sorted(capture_reasons)[0]
                     if capture_reasons

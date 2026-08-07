@@ -257,3 +257,160 @@ def test_operator_execute_once_is_explicitly_armed_and_one_shot() -> None:
     assert block.count("& $Python") == 1
     assert block.count('"--execute"') == 1
     assert "execute-once" not in tasks
+
+
+
+def test_stale_capture_waits_for_next_candle_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    output: list[str] = []
+    sleeps: list[float] = []
+    capture_calls = 0
+    digest = "a" * 64
+    plan_digest = "b" * 64
+
+    def credential_provider(prompt: str) -> str:
+        return "test-key" if "key" in prompt.casefold() else "test-secret"
+
+    def capture_runner(
+        argv: list[str],
+        **kwargs: Any,
+    ) -> int:
+        del argv
+        nonlocal capture_calls
+        capture_calls += 1
+
+        if capture_calls == 1:
+            kwargs["output"](
+                json.dumps(
+                    {
+                        "reason_codes": ["stale_candles"],
+                        "status": "BLOCKED",
+                    }
+                )
+            )
+            return 2
+
+        kwargs["output"](
+            json.dumps(
+                {
+                    "artifact_directory": "ignored",
+                    "input_digests": {},
+                    "reason_codes": ["capture_complete"],
+                    "status": "CAPTURED",
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(
+        rehearsal,
+        "_verify_capture",
+        lambda report: (
+            tmp_path,
+            {
+                "market-input.json": digest,
+                "account-input.json": digest,
+                "constraints-input.json": digest,
+                "policy-input.json": digest,
+            },
+        ),
+    )
+
+    def preparation_runner(
+        argv: list[str],
+        **kwargs: Any,
+    ) -> int:
+        del argv
+        kwargs["output"](
+            json.dumps(
+                {
+                    "artifact_path": "intent.json",
+                    "intent_digest": digest,
+                    "reason_codes": ["intent_ready"],
+                    "status": "READY",
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(
+        rehearsal,
+        "_verify_intent",
+        lambda report: ("intent.json", digest),
+    )
+
+    def demo_runner(
+        argv: list[str],
+        **kwargs: Any,
+    ) -> int:
+        del argv
+        kwargs["output"](
+            json.dumps(
+                {
+                    "reason_codes": ["dry_run_ready"],
+                    "status": "DRY_RUN_READY",
+                }
+            )
+        )
+        kwargs["output"](
+            json.dumps(
+                {
+                    "expires_at_ms": 1_000_000,
+                    "plan_artifact_path": "plan.json",
+                    "plan_digest": plan_digest,
+                }
+            )
+        )
+        return 0
+
+    plan = SimpleNamespace(
+        digest=plan_digest,
+        intent_digest=digest,
+        selected_host="https://open-api-vst.bingx.pro",
+        expires_at_ms=1_000_000,
+        symbol="BTC-USDT",
+        side="SELL",
+        position_side="SHORT",
+        quantity="0.0001",
+        limit_price="64000",
+        stop_loss="64640",
+        take_profit="62720",
+        notional="6.4",
+        leverage=2,
+    )
+
+    monkeypatch.setattr(
+        rehearsal,
+        "_verify_plan",
+        lambda *args, **kwargs: (
+            plan,
+            "plan.json",
+            990_000,
+        ),
+    )
+
+    result = rehearsal.main(
+        ["--attempts", "3"],
+        credential_provider=credential_provider,
+        output=output.append,
+        clock_ms=lambda: 10_000,
+        sleeper=sleeps.append,
+        capture_runner=capture_runner,
+        preparation_runner=preparation_runner,
+        demo_runner=demo_runner,
+    )
+
+    assert result == 0
+    assert capture_calls == 2
+    assert len(sleeps) == 1
+    assert any(
+        item.startswith("WAITING_NEXT_3M_SECONDS=")
+        for item in output
+    )
+    assert "REHEARSAL_STATUS=DRY_RUN_READY" in output
+    assert "ORDER_SUBMITTED=NO" in output
+    assert "EXECUTE_USED=NO" in output
