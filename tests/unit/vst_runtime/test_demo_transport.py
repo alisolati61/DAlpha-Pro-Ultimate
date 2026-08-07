@@ -272,7 +272,7 @@ async def test_submit_uses_one_limit_write_with_compact_structured_protection() 
     assert params["clientOrderId"] == plan.client_order_id
     assert params["positionSide"] == plan.position_side
     assert params["type"] == "LIMIT"
-    assert params["timeInForce"] == "GTC"
+    assert params["timeInForce"] == "PostOnly"
     assert params["stopLoss"] == (
         '{"stopGuaranteed":false,"stopPrice":90,'
         '"type":"STOP_MARKET","workingType":"MARK_PRICE"}'

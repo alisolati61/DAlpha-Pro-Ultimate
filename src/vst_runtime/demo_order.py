@@ -8,7 +8,13 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import (
+    ROUND_CEILING,
+    ROUND_FLOOR,
+    Decimal,
+    InvalidOperation,
+    localcontext,
+)
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
@@ -99,6 +105,9 @@ class DemoCanaryPolicy:
 
 
 DEFAULT_DEMO_CANARY_POLICY = DemoCanaryPolicy()
+
+_PASSIVE_BUFFER_BPS = Decimal("1")
+_MIN_PASSIVE_BUFFER_TICKS = Decimal("2")
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,7 +266,7 @@ class DemoOrderPlan:
                 raise ValueError("demo order plan is invalid")
         if self.notional != self.quantity * self.limit_price:
             raise ValueError("demo order plan notional is invalid")
-        if self.order_type != "LIMIT" or self.time_in_force != "GTC":
+        if self.order_type != "LIMIT" or self.time_in_force != "PostOnly":
             raise ValueError("demo order plan type is invalid")
         if self.side not in {"BUY", "SELL"}:
             raise ValueError("demo order plan side is invalid")
@@ -634,6 +643,89 @@ def deterministic_client_order_id(intent_id: str) -> str:
     return f"dalphavst{digest[:24]}"
 
 
+def _passive_canary_limit_price(
+    intent: ExecutionIntent,
+    book: DemoTopOfBook,
+    constraints: DemoContractConstraints,
+) -> Decimal:
+    """Derive a bounded maker-only canary price without increasing risk."""
+
+    assert intent.entry is not None
+    assert intent.stop_loss is not None
+    assert intent.take_profit is not None
+
+    entry = intent.entry
+    stop = intent.stop_loss
+    take = intent.take_profit
+    tick = constraints.price_tick
+
+    with localcontext() as context:
+        context.prec = 50
+
+        bps_buffer = (
+            entry.price
+            * _PASSIVE_BUFFER_BPS
+            / Decimal("10000")
+        )
+        tick_buffer = tick * _MIN_PASSIVE_BUFFER_TICKS
+        passive_buffer = max(
+            bps_buffer,
+            tick_buffer,
+        )
+
+        midpoint = (
+            entry.price + stop.price
+        ) / Decimal("2")
+
+        if entry.side is IntentSide.BUY:
+            raw_candidate = min(
+                entry.price,
+                book.best_ask - passive_buffer,
+            )
+            candidate = (
+                raw_candidate / tick
+            ).to_integral_value(
+                rounding=ROUND_FLOOR
+            ) * tick
+
+            if (
+                candidate <= 0
+                or candidate < midpoint
+                or candidate <= stop.price
+                or candidate >= take.price
+            ):
+                raise DemoCanaryError(
+                    "passive_limit_unavailable"
+                )
+
+            return candidate
+
+        if entry.side is IntentSide.SELL:
+            raw_candidate = max(
+                entry.price,
+                book.best_bid + passive_buffer,
+            )
+            candidate = (
+                raw_candidate / tick
+            ).to_integral_value(
+                rounding=ROUND_CEILING
+            ) * tick
+
+            if (
+                candidate <= 0
+                or candidate > midpoint
+                or candidate >= stop.price
+                or candidate <= take.price
+            ):
+                raise DemoCanaryError(
+                    "passive_limit_unavailable"
+                )
+
+            return candidate
+
+    raise DemoCanaryError("passive_limit_unavailable")
+
+
 async def build_demo_order_plan(
     intent: ExecutionIntent,
     intent_digest: str,
@@ -720,7 +812,12 @@ async def build_demo_order_plan(
     if entry.side is IntentSide.SELL and entry.price <= book.best_bid:
         raise DemoCanaryError("marketable_limit_price")
 
-    notional = entry.quantity * entry.price
+    limit_price = _passive_canary_limit_price(
+        intent,
+        book,
+        constraints,
+    )
+    notional = entry.quantity * limit_price
     if entry.quantity < constraints.minimum_quantity:
         raise DemoCanaryError("quantity_below_exchange_minimum")
     if notional < constraints.minimum_notional:
@@ -815,9 +912,9 @@ async def build_demo_order_plan(
         side=side,
         position_side=position_side,
         order_type="LIMIT",
-        time_in_force="GTC",
+        time_in_force="PostOnly",
         quantity=entry.quantity,
-        limit_price=entry.price,
+        limit_price=limit_price,
         stop_loss=intent.stop_loss.price,
         take_profit=intent.take_profit.price,
         notional=notional,

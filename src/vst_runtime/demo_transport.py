@@ -201,7 +201,7 @@ class BingXAsyncDemoOrderAdapter:
             "takeProfit": _protection_json(
                 "TAKE_PROFIT_MARKET", plan.take_profit
             ),
-            "timeInForce": "GTC",
+            "timeInForce": plan.time_in_force,
             "type": "LIMIT",
         }
         failure: DemoCanaryError

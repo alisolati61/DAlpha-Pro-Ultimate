@@ -43,6 +43,7 @@ _INTENT_RETRYABLE = frozenset(
 _DRY_RUN_RETRYABLE = frozenset(
     {
         "marketable_limit_price",
+        "passive_limit_unavailable",
     }
 )
 

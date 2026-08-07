@@ -453,6 +453,7 @@ async def test_dry_plan_is_nonmarket_read_only_and_deterministic(
 
     assert plan.side == side.value
     assert plan.position_side == expected_position_side
+    assert plan.time_in_force == "PostOnly"
     assert plan.notional == plan.quantity * plan.limit_price
     assert plan.client_order_id == deterministic_client_order_id(intent.intent_id)
     assert plan.selected_host == VST_HOST
@@ -486,6 +487,56 @@ async def test_dry_plan_is_nonmarket_read_only_and_deterministic(
     )
     with pytest.raises(ValueError, match="bounds"):
         DemoOrderPlan(**oversized)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_near_market_plan_is_repriced_passively_without_more_risk() -> None:
+    fake = FakeDemoTransport()
+    fake.book = DemoTopOfBook(
+        "BTC-USDT",
+        Decimal("99.9"),
+        Decimal("100.1"),
+        "tight-book",
+    )
+    intent = ready_intent(
+        price="100",
+        stop="90",
+        take="110",
+    )
+
+    plan = await build_plan(fake, intent)
+
+    assert plan.limit_price == Decimal("99.9")
+    assert plan.limit_price <= intent.entry.price
+    assert plan.limit_price > intent.stop_loss.price
+    assert plan.time_in_force == "PostOnly"
+
+
+@pytest.mark.asyncio
+async def test_passive_buffer_without_safe_stop_room_fails_closed() -> None:
+    fake = FakeDemoTransport()
+    fake.book = DemoTopOfBook(
+        "BTC-USDT",
+        Decimal("99.9"),
+        Decimal("100.1"),
+        "tight-book",
+    )
+    intent = ready_intent(
+        price="100",
+        stop="99.9",
+        take="110",
+    )
+
+    with pytest.raises(
+        DemoCanaryError,
+        match="passive_limit_unavailable",
+    ):
+        await build_plan(fake, intent)
+
+    assert not any(
+        name in {"submit_protected_limit", "cancel_order"}
+        for name, _ in fake.calls
+    )
 
 
 @pytest.mark.asyncio
