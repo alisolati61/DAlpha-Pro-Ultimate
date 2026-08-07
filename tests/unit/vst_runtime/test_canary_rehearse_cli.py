@@ -223,3 +223,37 @@ def test_operator_launches_rehearsal_as_repo_module() -> None:
     )[0]
 
     assert '"-m"' in rehearsal_block
+
+
+
+def test_operator_execute_once_is_explicitly_armed_and_one_shot() -> None:
+    root = Path(__file__).resolve().parents[3]
+
+    operator = (
+        root / "tools" / "operator.ps1"
+    ).read_text(encoding="utf-8")
+
+    tasks = (
+        root / ".vscode" / "tasks.json"
+    ).read_text(encoding="utf-8")
+
+    block = operator.split(
+        'if ($Action -eq "execute-once") {',
+        1,
+    )[1].split(
+        'Write-Host "Alpha Pro VST operator"',
+        1,
+    )[0]
+
+    assert "-ArmVstWrite" in operator
+    assert '"scripts.bingx_vst_demo_order"' in block
+    assert '"https://open-api-vst.bingx.pro"' in block
+    assert '"--execute"' in block
+    assert '"--plan-file"' in block
+    assert '"--plan-digest"' in block
+    assert "MAX_SUBMISSIONS=1" in block
+    assert "AUTOMATIC_WRITE_RETRY=DISABLED" in block
+    assert "NO_AUTOMATIC_RETRY=YES" in block
+    assert block.count("& $Python") == 1
+    assert block.count('"--execute"') == 1
+    assert "execute-once" not in tasks
