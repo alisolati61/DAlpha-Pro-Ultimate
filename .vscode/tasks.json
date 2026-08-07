@@ -1,0 +1,77 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Alpha: Status",
+      "type": "shell",
+      "command": ".\\tools\\dev.ps1",
+      "args": [
+        "status"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Alpha: Focused Tests",
+      "type": "shell",
+      "command": ".\\tools\\dev.ps1",
+      "args": [
+        "focused"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Alpha: VST Regression",
+      "type": "shell",
+      "command": ".\\tools\\dev.ps1",
+      "args": [
+        "vst"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Alpha: Quality",
+      "type": "shell",
+      "command": ".\\tools\\dev.ps1",
+      "args": [
+        "quality"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Alpha: Verify",
+      "type": "shell",
+      "command": ".\\tools\\dev.ps1",
+      "args": [
+        "verify"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Alpha: Full Regression",
+      "type": "shell",
+      "command": ".\\tools\\dev.ps1",
+      "args": [
+        "full"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Alpha: VST Read-Only Watch",
+      "type": "shell",
+      "command": ".\\tools\\operator.ps1",
+      "args": [
+        "watch"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Alpha: Release Verify",
+      "type": "shell",
+      "command": ".\\tools\\dev.ps1",
+      "args": [
+        "release"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
