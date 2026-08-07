@@ -72,6 +72,17 @@
         "release"
       ],
       "problemMatcher": []
+    },
+    {
+      "label": "Alpha: VST Safe Rehearsal",
+      "type": "shell",
+      "command": ".\\tools\\operator.ps1",
+      "args": [
+        "rehearse",
+        "-Attempts",
+        "3"
+      ],
+      "problemMatcher": []
     }
   ]
 }

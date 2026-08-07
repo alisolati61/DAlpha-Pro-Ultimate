@@ -84,7 +84,8 @@ function Run-Focused {
             "-p", "no:cacheprovider",
             "--basetemp=$temp",
             "tests/unit/vst_runtime/test_canary_capture.py",
-            "tests/unit/vst_runtime/test_canary_watch_cli.py"
+            "tests/unit/vst_runtime/test_canary_watch_cli.py",
+            "tests/unit/vst_runtime/test_canary_rehearse_cli.py"
         )
 }
 
@@ -130,9 +131,11 @@ function Run-Quality {
         @(
             "-m", "ruff", "check",
             "scripts/bingx_vst_watch_canary.py",
+            "scripts/bingx_vst_rehearse.py",
             "src/vst_runtime/canary_capture.py",
             "tests/unit/vst_runtime/test_canary_capture.py",
-            "tests/unit/vst_runtime/test_canary_watch_cli.py"
+            "tests/unit/vst_runtime/test_canary_watch_cli.py",
+            "tests/unit/vst_runtime/test_canary_rehearse_cli.py"
         )
 
     Run-Native `
@@ -141,7 +144,8 @@ function Run-Quality {
         @(
             "-m", "mypy",
             "--follow-imports=skip",
-            "src/vst_runtime/canary_capture.py"
+            "src/vst_runtime/canary_capture.py",
+            "scripts/bingx_vst_rehearse.py"
         )
 
     Run-Native `
