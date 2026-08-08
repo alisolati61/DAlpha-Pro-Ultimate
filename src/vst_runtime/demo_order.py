@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import (
     ROUND_CEILING,
@@ -1107,6 +1107,15 @@ async def execute_demo_order_plan(
     except DemoAmbiguousSubmission:
         submit_ambiguous = True
     except DemoCanaryError as error:
+        if error.reason_code == "order_rejected" or error.reason_code.startswith(
+            "order_rejected_"
+        ):
+            return await _reconcile_rejected_submission(
+                plan,
+                transport,
+                rejection_reason=error.reason_code,
+                clock_ms=clock_ms,
+            )
         return _execution_report(
             DemoOrderStatus.FAILED,
             transitions,
@@ -1315,6 +1324,408 @@ async def execute_demo_order_plan(
             ("matched",),
             ("no_action",),
         ),
+    )
+
+
+@dataclass(slots=True)
+class _RejectedReadEvidence:
+    matching_orders: list[RemoteOrder] = field(default_factory=list)
+    conflicting_orders: list[RemoteOrder] = field(default_factory=list)
+    fill_orders: list[RemoteOrder] = field(default_factory=list)
+    uncertainty_reasons: set[str] = field(default_factory=set)
+    nonzero_position: bool = False
+    exact_absent: bool = False
+    confirmed_open: bool = False
+    identity_conflict: bool = False
+
+    def observe_order(
+        self,
+        order: RemoteOrder,
+        plan: DemoOrderPlan,
+        *,
+        exact_query: bool = False,
+        open_endpoint: bool = False,
+    ) -> None:
+        if not exact_query and order.client_order_id != plan.client_order_id:
+            return
+        if not _order_matches_plan(order, plan):
+            self.identity_conflict = True
+            self.conflicting_orders.append(order)
+            if _order_has_fill_evidence(order):
+                self.fill_orders.append(order)
+            return
+
+        known_order_ids = {item.order_id for item in self.matching_orders}
+        if known_order_ids and order.order_id not in known_order_ids:
+            self.identity_conflict = True
+            self.conflicting_orders.extend((*self.matching_orders, order))
+        self.matching_orders.append(order)
+        if _order_has_fill_evidence(order):
+            self.fill_orders.append(order)
+        if open_endpoint or (
+            exact_query and order.status in _OPEN_ORDER_STATUSES
+        ):
+            self.confirmed_open = True
+
+
+_OPEN_ORDER_STATUSES = {
+    RemoteOrderStatus.NEW,
+    RemoteOrderStatus.PARTIALLY_FILLED,
+}
+_TERMINAL_ORDER_STATUSES = {
+    RemoteOrderStatus.CANCELED,
+    RemoteOrderStatus.EXPIRED,
+    RemoteOrderStatus.REJECTED,
+}
+
+
+async def _reconcile_rejected_submission(
+    plan: DemoOrderPlan,
+    transport: AsyncDemoOrderTransport,
+    *,
+    rejection_reason: str,
+    clock_ms: Clock,
+) -> DemoOrderReport:
+    initial = await _read_rejected_submission_evidence(
+        plan,
+        transport,
+        include_recent=True,
+    )
+    transitions: list[DemoOrderStatus] = []
+    if initial.matching_orders:
+        transitions.append(DemoOrderStatus.SUBMITTED)
+
+    cancellation = _RejectedReadEvidence()
+    final: _RejectedReadEvidence | None = None
+    cancel_attempted = initial.confirmed_open and not initial.identity_conflict
+    if cancel_attempted:
+        try:
+            cancel_result = await transport.cancel_order(
+                plan.symbol,
+                plan.client_order_id,
+            )
+        except Exception:
+            cancellation.uncertainty_reasons.add("cancel_outcome_ambiguous")
+        else:
+            if cancel_result is not None:
+                if isinstance(cancel_result, RemoteOrder):
+                    cancellation.observe_order(
+                        cancel_result,
+                        plan,
+                        exact_query=True,
+                    )
+                else:
+                    cancellation.uncertainty_reasons.add(
+                        "invalid_cancel_response_schema"
+                    )
+
+        # These reads are deliberately independent. Every one is attempted,
+        # even when cancellation or an earlier read produced adverse evidence.
+        final = await _read_rejected_submission_evidence(
+            plan,
+            transport,
+            include_recent=False,
+        )
+        if final.matching_orders and not transitions:
+            transitions.append(DemoOrderStatus.SUBMITTED)
+
+    evidence = tuple(
+        item for item in (initial, cancellation, final) if item is not None
+    )
+    all_matching = tuple(
+        order for item in evidence for order in item.matching_orders
+    )
+    all_conflicting = tuple(
+        order for item in evidence for order in item.conflicting_orders
+    )
+    all_fills = tuple(order for item in evidence for order in item.fill_orders)
+    has_position = any(item.nonzero_position for item in evidence)
+    has_identity_conflict = any(item.identity_conflict for item in evidence) or len(
+        {order.order_id for order in all_matching}
+    ) > 1
+
+    cancellation_orders = tuple(cancellation.matching_orders)
+    if final is not None:
+        cancellation_orders += tuple(final.matching_orders)
+    if cancel_attempted and any(
+        order.status is RemoteOrderStatus.CANCELED
+        for order in cancellation_orders
+    ):
+        transitions.append(DemoOrderStatus.CANCELLED)
+
+    representative = _strongest_order_evidence(
+        all_fills or all_matching or all_conflicting
+    )
+    if all_fills or has_position:
+        reasons = [rejection_reason, "unexpected_canary_fill"]
+        if has_identity_conflict:
+            reasons.append("remote_order_identity_mismatch")
+        return _execution_report(
+            DemoOrderStatus.UNEXPECTED_FILL,
+            transitions,
+            plan,
+            representative,
+            tuple(reasons),
+            ("operator_recovery_required", "inspect_vst_account"),
+            clock_ms(),
+            kill=True,
+            reconciliation=ReconciliationResult(
+                ReconciliationState.MISMATCH,
+                tuple(reason for reason in reasons if reason != rejection_reason),
+                ("activate_kill_switch", "inspect_remote_account"),
+            ),
+        )
+
+    if has_identity_conflict:
+        return _execution_report(
+            DemoOrderStatus.FAILED,
+            transitions,
+            plan,
+            representative,
+            (rejection_reason, "remote_order_identity_mismatch"),
+            ("inspect_vst_account", "do_not_resubmit"),
+            clock_ms(),
+            kill=True,
+            reconciliation=ReconciliationResult(
+                ReconciliationState.MISMATCH,
+                ("remote_order_identity_mismatch",),
+                ("activate_kill_switch", "inspect_remote_account"),
+            ),
+        )
+
+    uncertainty = {
+        reason for item in evidence for reason in item.uncertainty_reasons
+    }
+    terminal_evidence = final if cancel_attempted and final is not None else initial
+    if terminal_evidence.confirmed_open:
+        return _execution_report(
+            DemoOrderStatus.AMBIGUOUS,
+            transitions,
+            plan,
+            representative,
+            (rejection_reason, "canary_order_still_open"),
+            ("inspect_vst_account", "do_not_resubmit"),
+            clock_ms(),
+            kill=True,
+            reconciliation=ReconciliationResult(
+                ReconciliationState.MISMATCH,
+                ("canary_order_still_open",),
+                ("activate_kill_switch", "inspect_remote_account"),
+            ),
+        )
+    if any(
+        order.status is RemoteOrderStatus.UNKNOWN
+        for order in terminal_evidence.matching_orders
+    ):
+        uncertainty.add("remote_order_state_unknown")
+    if uncertainty:
+        return _rejected_reconciliation_unknown_report(
+            plan,
+            representative,
+            transitions,
+            rejection_reason=rejection_reason,
+            reasons=tuple(sorted(uncertainty)),
+            clock_ms=clock_ms,
+        )
+
+    if cancel_attempted:
+        assert final is not None
+        if any(
+            order.status not in _TERMINAL_ORDER_STATUSES
+            for order in final.matching_orders
+        ):
+            return _rejected_reconciliation_unknown_report(
+                plan,
+                representative,
+                transitions,
+                rejection_reason=rejection_reason,
+                reasons=("remote_order_state_unknown",),
+                clock_ms=clock_ms,
+            )
+        matched_reason = "rejected_order_closed"
+    elif initial.matching_orders:
+        if any(
+            order.status not in _TERMINAL_ORDER_STATUSES
+            for order in initial.matching_orders
+        ):
+            return _rejected_reconciliation_unknown_report(
+                plan,
+                representative,
+                transitions,
+                rejection_reason=rejection_reason,
+                reasons=("remote_order_state_unknown",),
+                clock_ms=clock_ms,
+            )
+        matched_reason = "rejected_order_already_terminal"
+    elif initial.exact_absent:
+        matched_reason = "rejected_without_remote_effect"
+    else:
+        return _rejected_reconciliation_unknown_report(
+            plan,
+            representative,
+            transitions,
+            rejection_reason=rejection_reason,
+            reasons=("reconciliation_reads_unavailable",),
+            clock_ms=clock_ms,
+        )
+
+    return _execution_report(
+        DemoOrderStatus.FAILED,
+        transitions,
+        plan,
+        representative,
+        (rejection_reason,),
+        ("inspect_vst_account", "do_not_resubmit"),
+        clock_ms(),
+        kill=True,
+        reconciliation=ReconciliationResult(
+            ReconciliationState.MATCHED,
+            (matched_reason,),
+            ("no_remote_recovery_required",),
+        ),
+    )
+
+
+async def _read_rejected_submission_evidence(
+    plan: DemoOrderPlan,
+    transport: AsyncDemoOrderTransport,
+    *,
+    include_recent: bool,
+) -> _RejectedReadEvidence:
+    evidence = _RejectedReadEvidence()
+    try:
+        exact_order = await transport.query_order(
+            plan.symbol,
+            plan.client_order_id,
+        )
+    except Exception:
+        evidence.uncertainty_reasons.add("reconciliation_reads_unavailable")
+    else:
+        if exact_order is None:
+            evidence.exact_absent = True
+        elif isinstance(exact_order, RemoteOrder):
+            evidence.observe_order(exact_order, plan, exact_query=True)
+        else:
+            evidence.uncertainty_reasons.add("invalid_order_response_schema")
+
+    try:
+        positions = await transport.fetch_positions(plan.symbol)
+    except Exception:
+        evidence.uncertainty_reasons.add("reconciliation_reads_unavailable")
+    else:
+        _observe_rejected_positions(evidence, positions, plan)
+
+    try:
+        open_orders = await transport.fetch_open_orders(plan.symbol)
+    except Exception:
+        evidence.uncertainty_reasons.add("reconciliation_reads_unavailable")
+    else:
+        _observe_rejected_orders(
+            evidence,
+            open_orders,
+            plan,
+            open_endpoint=True,
+        )
+
+    if include_recent:
+        try:
+            recent_orders = await transport.fetch_recent_orders(plan.symbol)
+        except Exception:
+            evidence.uncertainty_reasons.add("reconciliation_reads_unavailable")
+        else:
+            _observe_rejected_orders(evidence, recent_orders, plan)
+    return evidence
+
+
+def _observe_rejected_positions(
+    evidence: _RejectedReadEvidence,
+    positions: object,
+    plan: DemoOrderPlan,
+) -> None:
+    try:
+        items: tuple[object, ...] = tuple(positions)  # type: ignore[arg-type]
+    except Exception:
+        evidence.uncertainty_reasons.add("invalid_reconciliation_schema")
+        return
+    for item in items:
+        if not isinstance(item, BingXPosition):
+            evidence.uncertainty_reasons.add("invalid_reconciliation_schema")
+            continue
+        if item.symbol.upper() == plan.symbol and item.position_amount != 0:
+            evidence.nonzero_position = True
+
+
+def _observe_rejected_orders(
+    evidence: _RejectedReadEvidence,
+    orders: object,
+    plan: DemoOrderPlan,
+    *,
+    open_endpoint: bool = False,
+) -> None:
+    try:
+        items: tuple[object, ...] = tuple(orders)  # type: ignore[arg-type]
+    except Exception:
+        evidence.uncertainty_reasons.add("invalid_reconciliation_schema")
+        return
+    for item in items:
+        if not isinstance(item, RemoteOrder):
+            evidence.uncertainty_reasons.add("invalid_reconciliation_schema")
+            continue
+        evidence.observe_order(item, plan, open_endpoint=open_endpoint)
+
+
+def _rejected_reconciliation_unknown_report(
+    plan: DemoOrderPlan,
+    order: RemoteOrder | None,
+    transitions: Sequence[DemoOrderStatus],
+    *,
+    rejection_reason: str,
+    reasons: tuple[str, ...],
+    clock_ms: Clock,
+) -> DemoOrderReport:
+    normalized_reasons = tuple(sorted(set(reasons)))
+    return _execution_report(
+        DemoOrderStatus.AMBIGUOUS,
+        transitions,
+        plan,
+        order,
+        (rejection_reason, *normalized_reasons),
+        ("retry_read_only_reconciliation", "do_not_resubmit"),
+        clock_ms(),
+        kill=True,
+        reconciliation=ReconciliationResult(
+            ReconciliationState.UNKNOWN,
+            normalized_reasons,
+            ("retry_read_only_reconciliation", "do_not_resubmit"),
+        ),
+    )
+
+
+def _strongest_order_evidence(
+    orders: Sequence[RemoteOrder],
+) -> RemoteOrder | None:
+    if not orders:
+        return None
+    return max(
+        orders,
+        key=lambda item: (
+            _order_has_fill_evidence(item),
+            item.filled_quantity,
+            item.updated_at_ms,
+            item.status in _TERMINAL_ORDER_STATUSES,
+        ),
+    )
+
+
+def _order_has_fill_evidence(order: RemoteOrder) -> bool:
+    return (
+        order.filled_quantity > 0
+        or order.average_price > 0
+        or order.status
+        in {
+            RemoteOrderStatus.FILLED,
+            RemoteOrderStatus.PARTIALLY_FILLED,
+        }
     )
 
 

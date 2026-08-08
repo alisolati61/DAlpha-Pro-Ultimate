@@ -34,7 +34,11 @@ from src.vst_runtime.demo_order import (
     load_canonical_demo_order_plan,
     load_canonical_ready_intent,
 )
-from src.vst_runtime.models import RemoteOrder, RemoteOrderStatus
+from src.vst_runtime.models import (
+    ReconciliationState,
+    RemoteOrder,
+    RemoteOrderStatus,
+)
 
 NOW_MS = 1_800_000_000_000
 VST_HOST = "https://open-api-vst.bingx.com"
@@ -172,6 +176,7 @@ def standalone_order(
     side: str = "BUY",
     quantity: str = "0.05",
     price: str = "100",
+    average_price: str = "0",
 ) -> RemoteOrder:
     return RemoteOrder(
         client_order_id=client_order_id,
@@ -182,7 +187,7 @@ def standalone_order(
         status=status,
         original_quantity=Decimal(quantity),
         filled_quantity=Decimal(filled),
-        average_price=Decimal("0"),
+        average_price=Decimal(average_price),
         price=Decimal(price),
         update_id="update-1",
         updated_at_ms=NOW_MS,
@@ -195,11 +200,13 @@ def plan_order(
     *,
     filled: str = "0",
     client_order_id: str | None = None,
+    average_price: str = "0",
 ) -> RemoteOrder:
     return standalone_order(
         client_order_id=client_order_id or plan.client_order_id,
         status=status,
         filled=filled,
+        average_price=average_price,
         symbol=plan.symbol,
         side=plan.side,
         quantity=str(plan.quantity),
@@ -216,6 +223,7 @@ class FakeDemoTransport:
         )
         self.balances: object = (balance(),)
         self.positions: object = ()
+        self.position_results: list[object] = []
         self.leverage: object = DemoLeverageSnapshot("BTC-USDT", 1, 1)
         self.position_mode: object = "HEDGE"
         self.preflight_order: object = None
@@ -224,7 +232,7 @@ class FakeDemoTransport:
         self.recent_orders: object = ()
         self.submit_result: RemoteOrder | None = None
         self.submit_error: Exception | None = None
-        self.query_results: list[RemoteOrder | None | Exception] = []
+        self.query_results: list[object] = []
         self.cancel_result: RemoteOrder | None = None
         self.cancel_error: Exception | None = None
         self.calls: list[tuple[str, tuple[object, ...]]] = []
@@ -244,6 +252,11 @@ class FakeDemoTransport:
 
     async def fetch_positions(self, symbol: str) -> Sequence[BingXPosition]:
         self.calls.append(("fetch_positions", (symbol,)))
+        if self.position_results:
+            result = self.position_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result  # type: ignore[return-value]
         return self.positions  # type: ignore[return-value]
 
     async def fetch_leverage(self, symbol: str) -> DemoLeverageSnapshot:
@@ -257,7 +270,10 @@ class FakeDemoTransport:
     async def fetch_open_orders(self, symbol: str) -> Sequence[RemoteOrder]:
         self.calls.append(("fetch_open_orders", (symbol,)))
         if self.open_order_results:
-            return self.open_order_results.pop(0)  # type: ignore[return-value]
+            result = self.open_order_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result  # type: ignore[return-value]
         return self.open_orders  # type: ignore[return-value]
 
     async def fetch_recent_orders(self, symbol: str) -> Sequence[RemoteOrder]:
@@ -278,7 +294,7 @@ class FakeDemoTransport:
             result = self.query_results.pop(0)
             if isinstance(result, Exception):
                 raise result
-            return result
+            return result  # type: ignore[return-value]
         return self.preflight_order  # type: ignore[return-value]
 
     async def cancel_order(
@@ -755,6 +771,610 @@ async def test_ambiguous_submit_is_never_resubmitted(
     assert [name for name, _ in fake.calls].count("submit_protected_limit") == 1
     assert not any(name == "cancel_order" for name, _ in fake.calls)
     assert "raw-secret" not in report.to_json()
+
+
+@pytest.mark.parametrize(
+    "rejection_reason",
+    ("order_rejected", "order_rejected_109400"),
+)
+@pytest.mark.asyncio
+async def test_definitive_rejection_is_reconciled_without_remote_effect(
+    rejection_reason: str,
+) -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError(rejection_reason)
+    fake.query_results = [None, None]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.FAILED
+    assert report.reason_codes == (rejection_reason,)
+    assert report.reconciliation.state is ReconciliationState.MATCHED
+    assert report.reconciliation.reason_codes == ("rejected_without_remote_effect",)
+    assert report.kill_switch.active
+    assert [name for name, _ in fake.calls] == [
+        "fetch_constraints",
+        "fetch_positions",
+        "fetch_leverage",
+        "fetch_position_mode",
+        "fetch_open_orders",
+        "query_order",
+        "fetch_orderbook",
+        "submit_protected_limit",
+        "query_order",
+        "fetch_positions",
+        "fetch_open_orders",
+        "fetch_recent_orders",
+    ]
+    assert [name for name, _ in fake.calls].count("submit_protected_limit") == 1
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_definitive_rejection_read_failure_remains_unknown() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [None, RuntimeError("raw-secret")]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.AMBIGUOUS
+    assert report.reconciliation.state is ReconciliationState.UNKNOWN
+    assert report.reason_codes == (
+        "order_rejected_109400",
+        "reconciliation_reads_unavailable",
+    )
+    assert report.recommended_actions == (
+        "do_not_resubmit",
+        "retry_read_only_reconciliation",
+    )
+    assert report.kill_switch.active
+    assert [name for name, _ in fake.calls].count("submit_protected_limit") == 1
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+    assert "raw-secret" not in report.to_json()
+
+
+@pytest.mark.asyncio
+async def test_definitive_rejection_invalid_exact_query_remains_unknown() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [None, object()]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.AMBIGUOUS
+    assert report.reconciliation.state is ReconciliationState.UNKNOWN
+    assert report.reason_codes == (
+        "invalid_order_response_schema",
+        "order_rejected_109400",
+    )
+    assert [name for name, _ in fake.calls].count("submit_protected_limit") == 1
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_rejection_preserves_fill_when_later_read_fails() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        plan_order(plan, RemoteOrderStatus.FILLED, filled="0.05"),
+    ]
+    fake.position_results = [(), RuntimeError("raw-secret")]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.transitions == (
+        DemoOrderStatus.SUBMITTED,
+        DemoOrderStatus.UNEXPECTED_FILL,
+    )
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert report.reason_codes == (
+        "order_rejected_109400",
+        "unexpected_canary_fill",
+    )
+    assert report.kill_switch.active
+    assert [name for name, _ in fake.calls].count("submit_protected_limit") == 1
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+    assert "raw-secret" not in report.to_json()
+
+
+@pytest.mark.asyncio
+async def test_rejection_later_fill_evidence_dominates_earlier_read_failure() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [None, None]
+    fake.position_results = [(), RuntimeError("raw-secret")]
+    fake.recent_orders = (
+        plan_order(plan, RemoteOrderStatus.FILLED, filled="0.05"),
+    )
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.filled_quantity == Decimal("0.05")
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert [name for name, _ in fake.calls].count("submit_protected_limit") == 1
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+    assert "raw-secret" not in report.to_json()
+
+
+@pytest.mark.parametrize(
+    "observed_status",
+    (RemoteOrderStatus.NEW, RemoteOrderStatus.UNKNOWN),
+)
+@pytest.mark.asyncio
+async def test_definitive_rejection_cancels_matching_open_order_once(
+    observed_status: RemoteOrderStatus,
+) -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        None,
+        plan_order(plan, RemoteOrderStatus.CANCELED),
+    ]
+    fake.open_order_results = [
+        (),
+        (plan_order(plan, observed_status),),
+        (),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.FAILED
+    assert report.transitions == (
+        DemoOrderStatus.SUBMITTED,
+        DemoOrderStatus.CANCELLED,
+        DemoOrderStatus.FAILED,
+    )
+    assert report.reconciliation.state is ReconciliationState.MATCHED
+    assert "order_rejected_109400" in report.reason_codes
+    assert report.kill_switch.active
+    call_names = [name for name, _ in fake.calls]
+    assert call_names.count("submit_protected_limit") == 1
+    assert call_names.count("cancel_order") == 1
+    assert call_names.count("fetch_recent_orders") == 1
+
+
+@pytest.mark.asyncio
+async def test_rejection_exact_unknown_is_canceled_when_open() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        plan_order(plan, RemoteOrderStatus.UNKNOWN),
+        plan_order(plan, RemoteOrderStatus.CANCELED),
+    ]
+    fake.open_order_results = [
+        (),
+        (plan_order(plan, RemoteOrderStatus.UNKNOWN),),
+        (),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.FAILED
+    assert report.reconciliation.state is ReconciliationState.MATCHED
+    assert [name for name, _ in fake.calls].count("cancel_order") == 1
+
+
+@pytest.mark.asyncio
+async def test_rejection_preserves_fill_from_cancel_response() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        None,
+        plan_order(plan, RemoteOrderStatus.CANCELED),
+    ]
+    fake.open_order_results = [
+        (),
+        (plan_order(plan, RemoteOrderStatus.NEW),),
+        (),
+    ]
+    fake.cancel_result = plan_order(
+        plan,
+        RemoteOrderStatus.PARTIALLY_FILLED,
+        filled="0.02",
+    )
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.filled_quantity == Decimal("0.02")
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert [name for name, _ in fake.calls].count("cancel_order") == 1
+
+
+@pytest.mark.asyncio
+async def test_rejection_confirmed_open_after_cancel_is_mismatch() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        None,
+        plan_order(plan, RemoteOrderStatus.NEW),
+    ]
+    fake.open_order_results = [
+        (),
+        (plan_order(plan, RemoteOrderStatus.NEW),),
+        (plan_order(plan, RemoteOrderStatus.NEW),),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.AMBIGUOUS
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert "canary_order_still_open" in report.reason_codes
+    assert [name for name, _ in fake.calls].count("cancel_order") == 1
+
+
+@pytest.mark.asyncio
+async def test_rejection_positive_average_price_is_fill_evidence() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        plan_order(
+            plan,
+            RemoteOrderStatus.CANCELED,
+            average_price="100",
+        ),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_rejection_position_evidence_does_not_skip_open_order_cancel() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        None,
+        plan_order(plan, RemoteOrderStatus.CANCELED),
+    ]
+    fake.position_results = [(), (position(amount="0.01"),), ()]
+    fake.open_order_results = [
+        (),
+        (plan_order(plan, RemoteOrderStatus.NEW),),
+        (),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert [name for name, _ in fake.calls].count("cancel_order") == 1
+
+
+@pytest.mark.asyncio
+async def test_rejection_final_position_survives_open_order_read_failure() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        None,
+        plan_order(plan, RemoteOrderStatus.CANCELED),
+    ]
+    fake.position_results = [(), (), (position(amount="0.01"),)]
+    fake.open_order_results = [
+        (),
+        (plan_order(plan, RemoteOrderStatus.NEW),),
+        RuntimeError("raw-secret"),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert [name for name, _ in fake.calls].count("cancel_order") == 1
+    assert "raw-secret" not in report.to_json()
+
+
+@pytest.mark.asyncio
+async def test_definitive_rejection_mismatched_fill_requires_recovery() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        plan_order(
+            plan,
+            RemoteOrderStatus.FILLED,
+            filled="0.05",
+            client_order_id="differentclientorderid",
+        ),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.filled_quantity == Decimal("0.05")
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert report.reason_codes == (
+        "order_rejected_109400",
+        "remote_order_identity_mismatch",
+        "unexpected_canary_fill",
+    )
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_rejection_preserves_partial_fill_after_zero_fill_snapshot() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        plan_order(plan, RemoteOrderStatus.PARTIALLY_FILLED, filled="0.05"),
+        plan_order(plan, RemoteOrderStatus.CANCELED),
+    ]
+    fake.open_order_results = [(), ()]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.filled_quantity == Decimal("0.05")
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert [name for name, _ in fake.calls].count("cancel_order") == 1
+
+
+@pytest.mark.asyncio
+async def test_definitive_rejection_rejects_remote_identity_mismatch() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [
+        None,
+        plan_order(
+            plan,
+            RemoteOrderStatus.REJECTED,
+            client_order_id="differentclientorderid",
+        ),
+    ]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.FAILED
+    assert report.transitions == (DemoOrderStatus.FAILED,)
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert report.reason_codes == (
+        "order_rejected_109400",
+        "remote_order_identity_mismatch",
+    )
+    call_names = [name for name, _ in fake.calls]
+    assert call_names.count("fetch_open_orders") == 2
+    assert call_names.count("fetch_recent_orders") == 1
+    assert "cancel_order" not in call_names
+
+
+@pytest.mark.asyncio
+async def test_definitive_rejection_with_new_position_is_unexpected_fill() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [None, None]
+    fake.position_results = [(), (position(amount="0.01"),)]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.transitions == (DemoOrderStatus.UNEXPECTED_FILL,)
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert report.reason_codes == (
+        "order_rejected_109400",
+        "unexpected_canary_fill",
+    )
+    call_names = [name for name, _ in fake.calls]
+    assert call_names.count("submit_protected_limit") == 1
+    assert call_names.count("fetch_open_orders") == 2
+    assert call_names.count("fetch_recent_orders") == 1
+    assert "cancel_order" not in call_names
+
+
+@pytest.mark.asyncio
+async def test_rejection_mixed_position_schema_preserves_positive_evidence() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [None, None]
+    fake.position_results = [(), (object(), position(amount="0.01"))]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.UNEXPECTED_FILL
+    assert report.reconciliation.state is ReconciliationState.MISMATCH
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_rejection_recent_open_status_does_not_authorize_cancel() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("order_rejected_109400")
+    fake.query_results = [None, None]
+    fake.recent_orders = (
+        plan_order(plan, RemoteOrderStatus.NEW),
+    )
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.AMBIGUOUS
+    assert report.reconciliation.state is ReconciliationState.UNKNOWN
+    assert "remote_order_state_unknown" in report.reason_codes
+    assert report.kill_switch.active
+    assert [name for name, _ in fake.calls].count("submit_protected_limit") == 1
+    assert not any(name == "cancel_order" for name, _ in fake.calls)
+
+@pytest.mark.asyncio
+async def test_non_order_rejection_behavior_is_unchanged() -> None:
+    fake = FakeDemoTransport()
+    plan = await build_plan(fake)
+    fake.calls.clear()
+    fake.submit_error = DemoCanaryError("authentication_rejected")
+    fake.query_results = [None]
+
+    report = await execute_demo_order_plan(
+        plan,
+        fake,
+        approved_plan_digest=plan.digest,
+        typed_confirmation=f"SUBMIT {plan.client_order_id}",
+        clock_ms=lambda: NOW_MS,
+    )
+
+    assert report.status is DemoOrderStatus.FAILED
+    assert report.transitions == (DemoOrderStatus.FAILED,)
+    assert report.reason_codes == ("authentication_rejected",)
+    assert report.reconciliation.state is ReconciliationState.UNKNOWN
+    assert report.recommended_actions == ("inspect_vst_account",)
+    assert report.kill_switch.active
+    assert [name for name, _ in fake.calls][-1] == "submit_protected_limit"
+    assert [name for name, _ in fake.calls].count("query_order") == 1
 
 
 @pytest.mark.asyncio

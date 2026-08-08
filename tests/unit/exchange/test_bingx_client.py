@@ -133,7 +133,14 @@ def test_signed_request_uses_canonical_unencoded_signature() -> None:
     run(http_client.aclose())
 
 
-def test_signed_post_uses_form_body_and_no_query_string() -> None:
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "/openApi/swap/v2/trade/order/test",
+        "/openApi/swap/v2/trade/order",
+    ),
+)
+def test_signed_post_uses_form_body_and_no_query_string(endpoint: str) -> None:
     captured: dict[str, Any] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -152,25 +159,28 @@ def test_signed_post_uses_form_body_and_no_query_string() -> None:
     )
 
     params = {
+        "clientOrderId": "dalphavsta5d88e2b980c5b95b90f3f2b",
         "symbol": "BTC-USDT",
-        "side": "BUY",
-        "positionSide": "LONG",
+        "side": "SELL",
+        "positionSide": "SHORT",
         "type": "LIMIT",
         "quantity": "0.0001",
-        "price": "65000",
+        "price": "65108.5",
         "timeInForce": "PostOnly",
         "stopLoss": (
-            '{"stopPrice":64994.6,"type":"STOP_MARKET"}'
+            '{"stopGuaranteed":false,"stopPrice":65132.7,'
+            '"type":"STOP_MARKET","workingType":"MARK_PRICE"}'
         ),
         "takeProfit": (
-            '{"stopPrice":65006,"type":"TAKE_PROFIT_MARKET"}'
+            '{"stopGuaranteed":false,"stopPrice":65042.1,'
+            '"type":"TAKE_PROFIT_MARKET","workingType":"MARK_PRICE"}'
         ),
     }
 
     response = run(
         client.request(
             "POST",
-            "/openApi/swap/v2/trade/order/test",
+            endpoint,
             params=params,
             signed=True,
             retry_safe=False,
@@ -183,6 +193,7 @@ def test_signed_post_uses_form_body_and_no_query_string() -> None:
         "code": 0,
         "data": {"ok": True},
     }
+    assert request.url.path == endpoint
     assert request.url.query == b""
     assert request.headers["Content-Type"].startswith(
         "application/x-www-form-urlencoded"
@@ -210,6 +221,7 @@ def test_signed_post_uses_form_body_and_no_query_string() -> None:
     )
 
     assert request.content.decode() == expected_body
+    assert request.content.decode().count("&signature=") == 1
     assert "%7B" not in request.content.decode()
     assert "%22" not in request.content.decode()
 
