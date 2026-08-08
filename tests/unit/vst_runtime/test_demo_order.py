@@ -513,6 +513,53 @@ async def test_near_market_plan_is_repriced_passively_without_more_risk() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("side", "stop", "take", "expected"),
+    (
+        (IntentSide.BUY, "64998", "65004", Decimal("64999.6")),
+        (IntentSide.SELL, "65002", "64996", Decimal("65000.4")),
+    ),
+)
+async def test_high_price_tight_stop_uses_stop_bounded_passive_buffer(
+    side: IntentSide,
+    stop: str,
+    take: str,
+    expected: Decimal,
+) -> None:
+    fake = FakeDemoTransport()
+    fake.constraints = constraints(
+        quantity_step=Decimal("0.0001"),
+        minimum_quantity=Decimal("0.0001"),
+    )
+    fake.book = DemoTopOfBook(
+        "BTC-USDT",
+        Decimal("64999.9"),
+        Decimal("65000.1"),
+        "tight-high-price-book",
+    )
+
+    intent = ready_intent(
+        side=side,
+        price="65000",
+        quantity="0.0001",
+        stop=stop,
+        take=take,
+    )
+
+    plan = await build_plan(fake, intent)
+
+    assert plan.limit_price == expected
+    assert plan.time_in_force == "PostOnly"
+
+    if side is IntentSide.BUY:
+        assert plan.limit_price <= intent.entry.price
+        assert plan.limit_price > intent.stop_loss.price
+    else:
+        assert plan.limit_price >= intent.entry.price
+        assert plan.limit_price < intent.stop_loss.price
+
+
+@pytest.mark.asyncio
 async def test_passive_buffer_without_safe_stop_room_fails_closed() -> None:
     fake = FakeDemoTransport()
     fake.book = DemoTopOfBook(

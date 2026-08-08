@@ -107,6 +107,7 @@ class DemoCanaryPolicy:
 DEFAULT_DEMO_CANARY_POLICY = DemoCanaryPolicy()
 
 _PASSIVE_BUFFER_BPS = Decimal("1")
+_PASSIVE_STOP_FRACTION = Decimal("0.25")
 _MIN_PASSIVE_BUFFER_TICKS = Decimal("2")
 
 
@@ -668,9 +669,19 @@ def _passive_canary_limit_price(
             / Decimal("10000")
         )
         tick_buffer = tick * _MIN_PASSIVE_BUFFER_TICKS
+        stop_distance = abs(
+            entry.price - stop.price
+        )
+        stop_buffer_cap = (
+            stop_distance * _PASSIVE_STOP_FRACTION
+        )
+
         passive_buffer = max(
-            bps_buffer,
             tick_buffer,
+            min(
+                bps_buffer,
+                stop_buffer_cap,
+            ),
         )
 
         midpoint = (
