@@ -33,6 +33,8 @@ _DEFAULT_ATTEMPTS = 3
 _MAX_ATTEMPTS = 10
 _CLOSE_SETTLEMENT_MS = 2_500
 _MAX_ARTIFACT_BYTES = 1_000_000
+_MIN_EXECUTION_TTL_MS = 120_000
+
 _INTENT_RETRYABLE = frozenset(
     {
         "decision_hold",
@@ -567,6 +569,25 @@ def main(
                 clock_ms=clock,
                 plan_loader=plan_loader,
             )
+
+            if remaining_ms < _MIN_EXECUTION_TTL_MS:
+                output(
+                    f"PLAN_TTL_TOO_LOW_MS={remaining_ms}"
+                )
+
+                if attempt < attempts:
+                    _wait_for_next_candle(
+                        clock_ms=clock,
+                        sleeper=sleeper,
+                        output=output,
+                    )
+                    continue
+
+                return _blocked(
+                    output,
+                    stage="PLAN_TTL",
+                    reason="insufficient_execution_ttl",
+                )
 
             output("")
             output("========================================")
