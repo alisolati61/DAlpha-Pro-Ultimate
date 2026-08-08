@@ -300,6 +300,17 @@ class BingXHttpClient:
             request_params["signature"] = self._generate_signature(signing_string)
             request_headers["X-BX-APIKEY"] = self.api_key or ""
 
+        signed_form_post = signed and normalized_method == "POST"
+        transport_params = request_params
+        transport_data = request_data
+
+        if signed_form_post:
+            transport_params = {}
+            transport_data = request_params
+            request_headers["Content-Type"] = (
+                "application/x-www-form-urlencoded"
+            )
+
         if retry_safe is None:
             retry_safe = normalized_method in {"GET", "HEAD", "OPTIONS"}
 
@@ -314,7 +325,7 @@ class BingXHttpClient:
             url = self._build_url(
                 base_url,
                 normalized_endpoint,
-                request_params,
+                transport_params,
             )
 
             try:
@@ -322,7 +333,8 @@ class BingXHttpClient:
                     normalized_method,
                     url,
                     headers=request_headers,
-                    data=request_data,
+                    data=transport_data,
+                    form_encoded=signed_form_post,
                 )
                 payload = self._decode_response(
                     response,
@@ -1093,8 +1105,27 @@ class BingXHttpClient:
         *,
         headers: Mapping[str, str],
         data: Mapping[str, str] | None,
+        form_encoded: bool = False,
     ) -> httpx.Response:
         client = await self._get_client()
+
+        if form_encoded:
+            body = ""
+
+            if data is not None:
+                body = self._build_signing_string(data)
+                signature = data.get("signature")
+
+                if signature is not None:
+                    body = f"{body}&signature={signature}"
+
+            return await client.request(
+                method,
+                url,
+                headers=dict(headers),
+                content=body.encode("utf-8"),
+            )
+
         return await client.request(
             method,
             url,

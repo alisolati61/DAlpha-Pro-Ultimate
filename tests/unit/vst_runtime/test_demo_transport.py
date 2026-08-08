@@ -369,7 +369,7 @@ async def test_query_maps_only_official_not_found_to_absent() -> None:
                 error_code="109400",
             ),
             DemoCanaryError,
-            "order_rejected",
+            "order_rejected_109400",
         ),
     ],
 )

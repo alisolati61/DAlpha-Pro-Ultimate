@@ -133,6 +133,89 @@ def test_signed_request_uses_canonical_unencoded_signature() -> None:
     run(http_client.aclose())
 
 
+def test_signed_post_uses_form_body_and_no_query_string() -> None:
+    captured: dict[str, Any] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"ok": True}},
+            request=request,
+        )
+
+    client, http_client = build_client(
+        httpx.MockTransport(handler),
+        base_url="https://open-api-vst.bingx.pro",
+        demo_mode=True,
+        max_retries=0,
+    )
+
+    params = {
+        "symbol": "BTC-USDT",
+        "side": "BUY",
+        "positionSide": "LONG",
+        "type": "LIMIT",
+        "quantity": "0.0001",
+        "price": "65000",
+        "timeInForce": "PostOnly",
+        "stopLoss": (
+            '{"stopPrice":64994.6,"type":"STOP_MARKET"}'
+        ),
+        "takeProfit": (
+            '{"stopPrice":65006,"type":"TAKE_PROFIT_MARKET"}'
+        ),
+    }
+
+    response = run(
+        client.request(
+            "POST",
+            "/openApi/swap/v2/trade/order/test",
+            params=params,
+            signed=True,
+            retry_safe=False,
+        )
+    )
+
+    request = captured["request"]
+
+    assert response == {
+        "code": 0,
+        "data": {"ok": True},
+    }
+    assert request.url.query == b""
+    assert request.headers["Content-Type"].startswith(
+        "application/x-www-form-urlencoded"
+    )
+
+    signing_params = {
+        **params,
+        "recvWindow": "5000",
+        "timestamp": "1700000000000",
+    }
+
+    signing_string = "&".join(
+        f"{key}={value}"
+        for key, value in sorted(signing_params.items())
+    )
+
+    expected_signature = hmac.new(
+        b"api-secret",
+        signing_string.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    expected_body = (
+        f"{signing_string}&signature={expected_signature}"
+    )
+
+    assert request.content.decode() == expected_body
+    assert "%7B" not in request.content.decode()
+    assert "%22" not in request.content.decode()
+
+    run(http_client.aclose())
+
+
 def test_public_request_has_timestamp_without_credentials() -> None:
     captured: dict[str, Any] = {}
 

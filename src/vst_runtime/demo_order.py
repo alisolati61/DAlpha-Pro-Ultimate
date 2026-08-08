@@ -971,8 +971,6 @@ async def execute_demo_order_plan(
         current_open_orders = tuple(
             await transport.fetch_open_orders(plan.symbol)
         )
-        # Keep the public book sample closest to the sole write.
-        current_book = await transport.fetch_orderbook(plan.symbol)
     except DemoCanaryError:
         raise
     except Exception:
@@ -995,15 +993,6 @@ async def execute_demo_order_plan(
         or plan.notional < current_constraints.minimum_notional
     ):
         raise DemoCanaryError("order_below_exchange_minimum")
-    if (
-        not isinstance(current_book, DemoTopOfBook)
-        or current_book.symbol != plan.symbol
-    ):
-        raise DemoCanaryError("invalid_orderbook_schema")
-    if plan.side == "BUY" and plan.limit_price >= current_book.best_ask:
-        raise DemoCanaryError("marketable_limit_price")
-    if plan.side == "SELL" and plan.limit_price <= current_book.best_bid:
-        raise DemoCanaryError("marketable_limit_price")
     if any(not isinstance(item, BingXPosition) for item in current_positions):
         raise DemoCanaryError("positions_snapshot_invalid")
     if any(
@@ -1059,6 +1048,53 @@ async def execute_demo_order_plan(
         if not isinstance(existing_order, RemoteOrder):
             raise DemoCanaryError("invalid_orders_snapshot")
         raise DemoCanaryError("duplicate_client_order_id")
+
+    if clock_ms() > plan.expires_at_ms:
+        raise DemoCanaryError("plan_expired")
+
+    # The public orderbook must be the final network read before the
+    # sole mutation. This minimizes the PostOnly race window.
+    try:
+        current_book = await transport.fetch_orderbook(plan.symbol)
+    except DemoCanaryError:
+        raise
+    except Exception:
+        raise DemoCanaryError(
+            "pre_submit_validation_failed"
+        ) from None
+
+    if (
+        not isinstance(current_book, DemoTopOfBook)
+        or current_book.symbol != plan.symbol
+    ):
+        raise DemoCanaryError("invalid_orderbook_schema")
+
+    if plan.side == "BUY":
+        if plan.limit_price >= current_book.best_ask:
+            raise DemoCanaryError("marketable_limit_price")
+        if plan.stop_loss >= current_book.best_bid:
+            raise DemoCanaryError(
+                "pre_submit_stop_loss_invalid"
+            )
+        if plan.take_profit <= current_book.best_ask:
+            raise DemoCanaryError(
+                "pre_submit_take_profit_invalid"
+            )
+
+    elif plan.side == "SELL":
+        if plan.limit_price <= current_book.best_bid:
+            raise DemoCanaryError("marketable_limit_price")
+        if plan.stop_loss <= current_book.best_ask:
+            raise DemoCanaryError(
+                "pre_submit_stop_loss_invalid"
+            )
+        if plan.take_profit >= current_book.best_bid:
+            raise DemoCanaryError(
+                "pre_submit_take_profit_invalid"
+            )
+
+    # Recheck expiry after the final network read and immediately
+    # before dispatch.
     if clock_ms() > plan.expires_at_ms:
         raise DemoCanaryError("plan_expired")
 

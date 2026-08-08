@@ -716,8 +716,8 @@ async def test_submit_query_cancel_query_reconcile_exactly_once() -> None:
         "fetch_leverage",
         "fetch_position_mode",
         "fetch_open_orders",
-        "fetch_orderbook",
         "query_order",
+        "fetch_orderbook",
         "submit_protected_limit",
         "query_order",
         "cancel_order",
@@ -872,7 +872,6 @@ async def test_final_duplicate_check_precedes_the_only_submission(
         "fetch_leverage",
         "fetch_position_mode",
         "fetch_open_orders",
-        "fetch_orderbook",
         "query_order",
     ]
 
@@ -883,6 +882,8 @@ async def test_final_duplicate_check_precedes_the_only_submission(
     [
         ("constraints", "constraints_snapshot_changed"),
         ("market", "marketable_limit_price"),
+        ("stop", "pre_submit_stop_loss_invalid"),
+        ("take", "pre_submit_take_profit_invalid"),
         ("position", "existing_symbol_position"),
         ("leverage", "pre_submit_leverage_changed"),
         ("position_mode", "pre_submit_position_mode_changed"),
@@ -905,6 +906,20 @@ async def test_latest_pre_submit_state_is_revalidated_after_confirmation(
             Decimal("99"),
             plan.limit_price,
             "moved",
+        )
+    elif case == "stop":
+        fake.book = DemoTopOfBook(
+            plan.symbol,
+            plan.stop_loss,
+            plan.limit_price + Decimal("1"),
+            "stop-moved",
+        )
+    elif case == "take":
+        fake.book = DemoTopOfBook(
+            plan.symbol,
+            plan.limit_price - Decimal("1"),
+            plan.take_profit,
+            "take-moved",
         )
     elif case == "position":
         fake.positions = (position(amount="0.01"),)

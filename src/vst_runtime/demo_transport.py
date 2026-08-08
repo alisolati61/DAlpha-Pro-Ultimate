@@ -225,7 +225,9 @@ class BingXAsyncDemoOrderAdapter:
             if error.error_code == "101481":
                 failure = DemoAmbiguousSubmission()
             else:
-                failure = DemoCanaryError("order_rejected")
+                failure = DemoCanaryError(
+                    _order_rejection_reason(error)
+                )
         except ExchangeError:
             failure = DemoAmbiguousSubmission()
         except Exception:
@@ -415,6 +417,15 @@ def _protection_json(order_type: str, stop_price: Decimal) -> str:
         f"{price},\"type\":\"{order_type}\","
         '"workingType":"MARK_PRICE"}'
     )
+
+
+def _order_rejection_reason(error: OrderError) -> str:
+    code = str(error.error_code or "").strip()
+
+    if code.isdigit():
+        return f"order_rejected_{code}"
+
+    return "order_rejected"
 
 
 def _read_failure(error: BaseException, schema_reason: str) -> DemoCanaryError:
